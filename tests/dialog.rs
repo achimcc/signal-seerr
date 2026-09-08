@@ -357,3 +357,126 @@ async fn each_stranger_is_told_once_independently() {
     assert!(second_a.is_empty(), "a was just told");
     assert!(second_b.is_empty(), "b was just told");
 }
+
+/// What `FakeSeerr::request` actually recorded -- a free function, not an
+/// inherent `impl Dialog<..>` in this crate (that is only legal in the crate
+/// that defines `Dialog`).
+fn placed(d: &Dialog<FakeSeerr, FakeDirectory>) -> Vec<(i64, Seasons, SeerrUserId)> {
+    d.seerr_ref().placed.lock().unwrap().clone()
+}
+
+#[tokio::test]
+async fn a_digit_places_the_request_in_the_asker_s_name() {
+    let seerr = FakeSeerr {
+        hits: vec![movie(335984, "Blade Runner 2049")],
+        ..Default::default()
+    };
+    let mut d = dialog(seerr, true);
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "blade runner").await;
+    let out = d.handle(&aci, "1").await;
+
+    assert!(out[0].contains("eingetragen"), "got: {}", out[0]);
+    assert!(
+        out[0].contains("1849"),
+        "the withdrawal number must be named: {}",
+        out[0]
+    );
+}
+
+#[tokio::test]
+async fn a_digit_outside_the_list_is_not_a_request() {
+    let seerr = FakeSeerr {
+        hits: vec![movie(1, "A")],
+        ..Default::default()
+    };
+    let mut d = dialog(seerr, true);
+    let aci = Aci("aaaa".into());
+    d.handle(&aci, "a").await;
+    let out = d.handle(&aci, "4").await;
+    assert!(out[0].contains("nichts anfangen"), "got: {}", out[0]);
+}
+
+#[tokio::test]
+async fn a_digit_with_no_open_list_is_a_search() {
+    // Ten minutes on, "2" means a film called 2 again -- not entry two of a
+    // list nobody can still see.
+    let mut d = dialog(FakeSeerr::default(), true);
+    let out = d.handle(&Aci("aaaa".into()), "2").await;
+    assert!(
+        out[0].contains("nichts"),
+        "expected a search, got: {}",
+        out[0]
+    );
+}
+
+#[tokio::test]
+async fn a_series_is_asked_about_its_seasons_before_anything_is_placed() {
+    let series = Hit {
+        kind: MediaKind::Tv,
+        seasons: 2,
+        ..movie(4321, "Andor")
+    };
+    let seerr = FakeSeerr {
+        hits: vec![series],
+        ..Default::default()
+    };
+    let mut d = dialog(seerr, true);
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "andor").await;
+    let asked = d.handle(&aci, "1").await;
+    assert!(asked[0].contains("Staffeln"), "got: {}", asked[0]);
+
+    let done = d.handle(&aci, "alle").await;
+    assert!(done[0].contains("eingetragen"), "got: {}", done[0]);
+}
+
+#[tokio::test]
+async fn named_seasons_are_passed_through() {
+    let series = Hit {
+        kind: MediaKind::Tv,
+        seasons: 3,
+        ..movie(4321, "Andor")
+    };
+    let seerr = FakeSeerr {
+        hits: vec![series],
+        ..Default::default()
+    };
+    let mut d = dialog(seerr, true);
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "andor").await;
+    d.handle(&aci, "1").await;
+    d.handle(&aci, "1 3").await;
+
+    let list = placed(&d);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].1, Seasons::Only(vec![1, 3]));
+    assert_eq!(
+        list[0].2,
+        SeerrUserId(12),
+        "placed as the asker, not as the key owner"
+    );
+}
+
+#[tokio::test]
+async fn a_season_number_that_does_not_exist_is_refused() {
+    let series = Hit {
+        kind: MediaKind::Tv,
+        seasons: 2,
+        ..movie(4321, "Andor")
+    };
+    let seerr = FakeSeerr {
+        hits: vec![series],
+        ..Default::default()
+    };
+    let mut d = dialog(seerr, true);
+    let aci = Aci("aaaa".into());
+    d.handle(&aci, "andor").await;
+    d.handle(&aci, "1").await;
+    let out = d.handle(&aci, "1 9").await;
+    assert!(out[0].contains("Staffeln"), "asked again, got: {}", out[0]);
+    assert!(placed(&d).is_empty(), "placed a season that does not exist");
+}

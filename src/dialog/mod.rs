@@ -1,6 +1,6 @@
 use crate::directory::Directory;
 use crate::i18n::{Catalogue, Locale};
-use crate::model::{Aci, Hit, MediaKind};
+use crate::model::{Aci, Hit, MediaKind, Seasons};
 use crate::seerr::Requests;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -132,7 +132,133 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
                 .await;
         }
 
+        // An open seasons question swallows the next message, whatever it is.
+        if let Some(Conversation::Seasons { hit, at }) = self.conversations.get(from).cloned() {
+            if at.elapsed() <= RESULTS_LIVE {
+                return self.place_series(from, locale, hit, text).await;
+            }
+            self.conversations.remove(from);
+        }
+
+        if let Ok(choice) = text.parse::<usize>() {
+            if let Some(Conversation::Results { hits, at, .. }) =
+                self.conversations.get(from).cloned()
+            {
+                if at.elapsed() <= RESULTS_LIVE {
+                    return self.choose(from, locale, &hits, choice).await;
+                }
+                // Stale list: fall through, so "2" searches for "2" again.
+                self.conversations.remove(from);
+            }
+        }
+
         self.search(from, locale, text, None, 1).await
+    }
+
+    async fn choose(
+        &mut self,
+        from: &Aci,
+        locale: Locale,
+        hits: &[Hit],
+        choice: usize,
+    ) -> Vec<String> {
+        let Some(hit) = choice.checked_sub(1).and_then(|i| hits.get(i)).cloned() else {
+            return vec![self.catalogue.text(locale, "error.not_understood", &[])];
+        };
+        if hit.already {
+            self.conversations.remove(from);
+            return vec![self
+                .catalogue
+                .text(locale, "request.already", &[("title", &hit.title)])];
+        }
+
+        if matches!(hit.kind, MediaKind::Tv) {
+            let question =
+                self.catalogue
+                    .text(locale, "request.seasons_question", &[("title", &hit.title)]);
+            self.conversations.insert(
+                from.clone(),
+                Conversation::Seasons {
+                    hit,
+                    at: Instant::now(),
+                },
+            );
+            return vec![question];
+        }
+
+        self.place(from, locale, &hit, Seasons::NotApplicable).await
+    }
+
+    async fn place_series(
+        &mut self,
+        from: &Aci,
+        locale: Locale,
+        hit: Hit,
+        answer: &str,
+    ) -> Vec<String> {
+        let lowered = answer.trim().to_lowercase();
+        let seasons = if lowered == "alle" || lowered == "all" {
+            Seasons::All
+        } else {
+            let wanted: Option<Vec<u16>> = lowered
+                .split_whitespace()
+                .map(|t| t.parse::<u16>().ok())
+                .collect();
+            match wanted {
+                // A season that does not exist would be accepted by Seerr and
+                // then sit in the list for ever, waiting for something that
+                // is never coming.
+                Some(list)
+                    if !list.is_empty() && list.iter().all(|s| *s >= 1 && *s <= hit.seasons) =>
+                {
+                    Seasons::Only(list)
+                }
+                _ => {
+                    return vec![self.catalogue.text(
+                        locale,
+                        "request.seasons_question",
+                        &[("title", &hit.title)],
+                    )]
+                }
+            }
+        };
+        self.place(from, locale, &hit, seasons).await
+    }
+
+    async fn place(
+        &mut self,
+        from: &Aci,
+        locale: Locale,
+        hit: &Hit,
+        seasons: Seasons,
+    ) -> Vec<String> {
+        let Some(member) = self.directory.lookup(from) else {
+            return vec![];
+        };
+        let user = match self.seerr.user_id(&member.authentik_username).await {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                tracing::warn!(user = member.authentik_username, "no seerr account");
+                return vec![self.catalogue.text(locale, "error.seerr_down", &[])];
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot look up the seerr account");
+                return vec![self.catalogue.text(locale, "error.seerr_down", &[])];
+            }
+        };
+
+        self.conversations.remove(from);
+        match self.seerr.request(hit, seasons, user).await {
+            Ok(id) => vec![self.catalogue.text(
+                locale,
+                "request.placed",
+                &[("title", &hit.title), ("id", &id.to_string())],
+            )],
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot place the request");
+                vec![self.catalogue.text(locale, "error.seerr_down", &[])]
+            }
+        }
     }
 
     fn tell_stranger_once(&mut self, from: &Aci) -> Vec<String> {
