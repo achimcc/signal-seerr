@@ -1,4 +1,4 @@
-use crate::i18n::{Catalogue, Locale};
+use crate::i18n::Catalogue;
 use crate::secret::Secret;
 use crate::seerr::Requests;
 use crate::signal::Messenger;
@@ -107,7 +107,7 @@ async fn handle(
     };
 
     let text = state.catalogue.text(
-        Locale::De,
+        entry.locale,
         key,
         &[("title", &payload.subject), ("url", &state.jellyfin_url)],
     );
@@ -120,6 +120,7 @@ async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::i18n::Locale;
     use crate::model::{Aci, Hit, MediaKind, Pending, Seasons, SeerrUserId};
     use crate::state::Entry;
     use axum::body::Body;
@@ -180,18 +181,22 @@ mod tests {
                 // 4242 belongs to a Seerr account with no matching entry in
                 // our state -- e.g. somebody who never linked Signal.
                 4242 => Some("konrad".to_string()),
+                // 9001 is "silvia", whose account is set to English -- used to
+                // check the notice goes out in the requester's own locale,
+                // not a hardcoded one.
+                9001 => Some("silvia".to_string()),
                 _ => None,
             })
         }
     }
 
-    fn entry(user: &str, aci: &str) -> Entry {
+    fn entry(user: &str, aci: &str, locale: Locale) -> Entry {
         Entry {
             authentik_username: user.into(),
             signal_username: format!("{user}.1"),
             aci: Aci(aci.into()),
             greeted: true,
-            locale: Locale::De,
+            locale,
             groups: vec!["Medien".into()],
         }
     }
@@ -204,7 +209,8 @@ mod tests {
         let messenger = Arc::new(SharedMessenger { sent: sent.clone() });
 
         let mut state = State::default();
-        state.upsert(entry("robert", "aaaa"));
+        state.upsert(entry("robert", "aaaa", Locale::De));
+        state.upsert(entry("silvia", "eeee", Locale::En));
 
         let webhook_state = WebhookState {
             messenger,
@@ -278,6 +284,68 @@ mod tests {
             "the link must be there: {}",
             sent[0].1
         );
+    }
+
+    #[tokio::test]
+    async fn media_available_uses_the_requesters_locale_not_a_hardcoded_one() {
+        // "silvia" (request id 9001) is set to English in `test_app`'s state.
+        // `Entry.locale` exists so the notice can be worded without a second
+        // network round trip -- this must actually be read, not ignored in
+        // favour of a fixed language.
+        let (app, sent) = test_app();
+        let response = app
+            .oneshot(
+                Request::post("/seerr")
+                    .header("X-Webhook-Token", "t-o-k-e-n")
+                    .header("content-type", "application/json")
+                    .body(body("MEDIA_AVAILABLE", 9001))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].0, "eeee");
+        let expected = Catalogue::load().text(
+            Locale::En,
+            "available.ready",
+            &[
+                ("title", "Blade Runner 2049 (2017)"),
+                ("url", "https://jellyfin.example.org"),
+            ],
+        );
+        assert_eq!(sent[0].1, expected, "must be the ENGLISH catalogue text");
+    }
+
+    #[tokio::test]
+    async fn media_failed_uses_the_requesters_locale_too() {
+        // The two notification branches share one `text()` call in the
+        // handler; this guards against a future refactor giving them two
+        // separate calls and fixing only one.
+        let (app, sent) = test_app();
+        let response = app
+            .oneshot(
+                Request::post("/seerr")
+                    .header("X-Webhook-Token", "t-o-k-e-n")
+                    .header("content-type", "application/json")
+                    .body(body("MEDIA_FAILED", 9001))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        let expected = Catalogue::load().text(
+            Locale::En,
+            "available.failed",
+            &[
+                ("title", "Blade Runner 2049 (2017)"),
+                ("url", "https://jellyfin.example.org"),
+            ],
+        );
+        assert_eq!(sent[0].1, expected, "must be the ENGLISH catalogue text");
     }
 
     #[tokio::test]
