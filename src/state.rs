@@ -125,15 +125,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         let mut s = State::default();
-        s.upsert(entry("robert", "robert.42", "aaaa"));
+        let original = entry("robert", "robert.42", "aaaa");
+        s.upsert(original.clone());
         s.save(&path).unwrap();
 
         let back = State::load(&path).unwrap();
-        assert_eq!(
-            back.by_aci(&Aci("aaaa".into())).unwrap().authentik_username,
-            "robert"
-        );
-        assert_eq!(back.by_user("robert").unwrap().signal_username, "robert.42");
+        // Compares every field, not just the two used to look it up -- a
+        // serde rename typo on `locale` or `groups` must not survive a
+        // save/load cycle unnoticed.
+        assert_eq!(back.by_aci(&Aci("aaaa".into())).unwrap(), &original);
+        assert_eq!(back.by_user("robert").unwrap(), &original);
     }
 
     #[test]
@@ -163,6 +164,12 @@ mod tests {
         // Written to a sibling temp file and renamed. A crash mid-write would
         // otherwise leave a truncated state, and every greeting would be sent
         // a second time.
+        //
+        // This does not by itself distinguish an atomic write from a plain
+        // one -- both leave the directory looking the same on success. It is
+        // kept as a guard against stray temp files;
+        // `a_failed_save_leaves_the_previous_state_intact` below is the test
+        // that actually forces a failure and checks nothing was damaged.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         let mut s = State::default();
@@ -176,5 +183,74 @@ mod tests {
             .filter(|n| n != "state.json")
             .collect();
         assert!(leftovers.is_empty(), "left behind: {leftovers:?}");
+    }
+
+    #[test]
+    fn a_failed_save_leaves_the_previous_state_intact() {
+        // This is what write-then-rename buys: a save that fails must not damage
+        // what was already on disk. A direct write to the target would truncate it
+        // before failing, and the next start would greet everybody a second time.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+
+        let mut first = State::default();
+        first.upsert(entry("robert", "robert.42", "aaaa"));
+        first.save(&path).unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        // Occupy the sibling name the atomic write needs, with a directory --
+        // nothing can be written onto that.
+        std::fs::create_dir(path.with_extension("json.new")).unwrap();
+
+        let mut second = State::default();
+        second.upsert(entry("konrad", "konrad.7", "bbbb"));
+        assert!(
+            second.save(&path).is_err(),
+            "the save must fail rather than quietly succeed"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "a failed save must leave the previous state untouched"
+        );
+    }
+
+    #[test]
+    fn signal_name_taken_by_finds_a_hit_case_insensitively_and_misses_cleanly() {
+        // Signal treats usernames case-insensitively; a case-sensitive
+        // comparison here would let a second account claim a name the first
+        // already holds.
+        let mut s = State::default();
+        s.upsert(entry("robert", "robert.42", "aaaa"));
+
+        assert_eq!(
+            s.signal_name_taken_by("ROBERT.42")
+                .unwrap()
+                .authentik_username,
+            "robert"
+        );
+        assert!(s.signal_name_taken_by("konrad.7").is_none());
+    }
+
+    #[test]
+    fn remove_user_takes_the_entry_out_and_reports_absence() {
+        let mut s = State::default();
+        s.upsert(entry("robert", "robert.42", "aaaa"));
+
+        let removed = s.remove_user("robert").unwrap();
+        assert_eq!(removed.signal_username, "robert.42");
+        assert!(s.by_user("robert").is_none());
+        assert!(s.remove_user("robert").is_none());
+    }
+
+    #[test]
+    fn iter_yields_every_entry() {
+        let mut s = State::default();
+        s.upsert(entry("robert", "robert.42", "aaaa"));
+        s.upsert(entry("konrad", "konrad.7", "bbbb"));
+
+        let mut names: Vec<_> = s.iter().map(|e| e.authentik_username.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["konrad", "robert"]);
     }
 }
