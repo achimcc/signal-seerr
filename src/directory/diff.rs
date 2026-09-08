@@ -50,15 +50,13 @@ pub enum Change {
 pub fn plan(state: &State, users: &[AuthentikUser]) -> Vec<Change> {
     let mut changes = Vec::new();
     // Names claimed during THIS pass, so two fresh accounts asking for one
-    // name do not both get it.
+    // name do not both get it. Kept in their original case and compared with
+    // eq_ignore_ascii_case below -- the same idiom the "already correct"
+    // check a few lines down uses, rather than a second, lowercased notion
+    // of equality.
     let mut claimed: Vec<(String, String)> = state
         .iter()
-        .map(|e| {
-            (
-                e.signal_username.to_lowercase(),
-                e.authentik_username.clone(),
-            )
-        })
+        .map(|e| (e.signal_username.clone(), e.authentik_username.clone()))
         .collect();
 
     for user in users {
@@ -84,10 +82,9 @@ pub fn plan(state: &State, users: &[AuthentikUser]) -> Vec<Change> {
             }
         }
 
-        let key = wanted.to_lowercase();
         if let Some((_, holder)) = claimed
             .iter()
-            .find(|(name, holder)| name == &key && holder != &user.username)
+            .find(|(name, holder)| name.eq_ignore_ascii_case(wanted) && holder != &user.username)
         {
             changes.push(Change::Conflict {
                 username: user.username.clone(),
@@ -98,7 +95,7 @@ pub fn plan(state: &State, users: &[AuthentikUser]) -> Vec<Change> {
         }
 
         claimed.retain(|(_, holder)| holder != &user.username);
-        claimed.push((key, user.username.clone()));
+        claimed.push((wanted.to_string(), user.username.clone()));
 
         changes.push(if existing.is_some() {
             Change::Rebound {

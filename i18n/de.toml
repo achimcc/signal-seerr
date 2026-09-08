@@ -1,6 +1,9 @@
 [greeting]
 title = "Hallo {name} — ab jetzt kannst du dir hier Filme und Serien wünschen."
 
+[farewell]
+goodbye = "Ich habe deinen Signal-Namen vergessen — trag ihn bei Rusty Vault wieder ein, wenn du wieder Filme und Serien wünschen möchtest."
+
 [help]
 body = """
 Schreib mir einfach einen Titel, dann suche ich.

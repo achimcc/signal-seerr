@@ -92,6 +92,10 @@ fn parse_users(body: &serde_json::Value, fallback_locale: &str) -> Vec<Authentik
 
 /// Carries out what `plan` decided. The resolver is a parameter rather than a
 /// SignalClient so the whole pass is testable without a socket.
+///
+/// Returns nothing: every failure path below (a resolve, a greeting, a
+/// farewell) is logged and swallowed rather than propagated, on purpose --
+/// see each arm -- so there is no outcome left for a caller to branch on.
 pub async fn apply<F, Fut>(
     state: &mut State,
     changes: Vec<Change>,
@@ -99,8 +103,7 @@ pub async fn apply<F, Fut>(
     messenger: &dyn Messenger,
     catalogue: &Catalogue,
     resolve: F,
-) -> Result<()>
-where
+) where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<Option<Aci>>>,
 {
@@ -157,12 +160,35 @@ where
                 // (a concurrent removal), there is simply nobody left to
                 // greet.
                 if let Some(entry) = state.by_user(&username).cloned() {
-                    let locale = entry.locale;
-                    let aci = entry.aci.clone();
-                    greet(state, messenger, catalogue, &username, &aci, locale).await;
+                    // Re-derived from `users`, same as Added/Rebound above,
+                    // not read off the stored entry: somebody who changed
+                    // their language between the failed send and this retry
+                    // must get the current one, not the stale one.
+                    let locale = users
+                        .iter()
+                        .find(|u| u.username == username)
+                        .map(|u| Locale::from_authentik(&u.locale))
+                        .unwrap_or(entry.locale);
+                    greet(state, messenger, catalogue, &username, &entry.aci, locale).await;
                 }
             }
-            Change::Removed { username, aci: _ } => {
+            Change::Removed { username, aci } => {
+                // The farewell is specified (design doc: transition table
+                // and dialog section), not optional -- clearing the field is
+                // how a person unsubscribes, and without it they get
+                // silence, which reads as the bot being broken rather than
+                // as a confirmed goodbye. Sent before the removal, but a
+                // failed send must not block it: the person asked to be
+                // forgotten, and that happens whether or not the goodbye
+                // lands.
+                let locale = state
+                    .by_user(&username)
+                    .map(|e| e.locale)
+                    .unwrap_or(Locale::En);
+                let text = catalogue.text(locale, "farewell.goodbye", &[]);
+                if let Err(e) = messenger.send(&aci, &text).await {
+                    tracing::warn!(username, error = %e, "cannot send farewell");
+                }
                 state.remove_user(&username);
                 tracing::info!(username, "signal name cleared");
             }
@@ -180,7 +206,6 @@ where
             }
         }
     }
-    Ok(())
 }
 
 /// Sends the welcome message and marks the entry greeted on success. A
@@ -268,8 +293,7 @@ mod tests {
             &catalogue,
             resolve,
         )
-        .await
-        .unwrap();
+        .await;
         assert_eq!(messenger.0.lock().unwrap().len(), 1);
         assert!(state.by_user("robert").unwrap().greeted);
 
@@ -283,8 +307,7 @@ mod tests {
             &catalogue,
             resolve,
         )
-        .await
-        .unwrap();
+        .await;
         assert_eq!(messenger.0.lock().unwrap().len(), 1, "greeted twice");
     }
 
@@ -310,8 +333,7 @@ mod tests {
             &catalogue,
             resolve,
         )
-        .await
-        .unwrap();
+        .await;
         assert!(
             state.by_user("robert").is_none(),
             "an unresolvable name must not be pinned"
@@ -330,8 +352,7 @@ mod tests {
             &catalogue,
             resolve,
         )
-        .await
-        .unwrap();
+        .await;
         assert!(messenger.0.lock().unwrap().is_empty());
     }
 
@@ -370,8 +391,7 @@ mod tests {
             &catalogue,
             resolve,
         )
-        .await
-        .unwrap();
+        .await;
         assert_eq!(
             state.by_user("robert").map(|e| e.greeted),
             Some(false),
@@ -397,8 +417,7 @@ mod tests {
             &catalogue,
             resolve,
         )
-        .await
-        .unwrap();
+        .await;
         assert_eq!(messenger.0.lock().unwrap().len(), 1);
         assert!(state.by_user("robert").unwrap().greeted);
     }
@@ -439,9 +458,7 @@ mod tests {
         let messenger = FailsForOneAci("aci-a.1".to_string());
 
         let changes = plan(&state, &users);
-        apply(&mut state, changes, &users, &messenger, &catalogue, resolve)
-            .await
-            .unwrap();
+        apply(&mut state, changes, &users, &messenger, &catalogue, resolve).await;
 
         assert_eq!(
             state.by_user("a").map(|e| e.greeted),
@@ -452,6 +469,91 @@ mod tests {
             state.by_user("b").map(|e| e.greeted),
             Some(true),
             "b must still be greeted despite a's failure"
+        );
+    }
+
+    fn known(state: &mut State, name: &str, signal: &str, aci: &str) {
+        state.upsert(Entry {
+            authentik_username: name.into(),
+            signal_username: signal.into(),
+            aci: Aci(aci.into()),
+            greeted: true,
+            locale: Locale::De,
+            groups: vec!["Medien".into()],
+        });
+    }
+
+    #[tokio::test]
+    async fn clearing_the_name_sends_a_farewell_and_forgets_the_person() {
+        // Clearing the field is how a person unsubscribes. Without the
+        // farewell they get silence, which looks exactly like the bot being
+        // broken -- so the next thing they do is write to it and get
+        // nothing back, because they are no longer known.
+        let messenger = Arc::new(Sent::default());
+        let mut state = State::default();
+        let catalogue = Catalogue::load();
+        known(&mut state, "robert", "robert.42", "aaaa");
+        let users = vec![AuthentikUser {
+            username: "robert".into(),
+            signal_username: None,
+            locale: "de".into(),
+            groups: vec!["Medien".into()],
+        }];
+        let resolve = |_name: String| async { Ok(Some(Aci("unused".into()))) };
+
+        let changes = plan(&state, &users);
+        assert_eq!(
+            changes,
+            vec![Change::Removed {
+                username: "robert".into(),
+                aci: Aci("aaaa".into())
+            }]
+        );
+        apply(
+            &mut state,
+            changes,
+            &users,
+            &*messenger,
+            &catalogue,
+            resolve,
+        )
+        .await;
+
+        let sent = messenger.0.lock().unwrap();
+        assert_eq!(sent.len(), 1, "exactly one farewell");
+        assert_eq!(sent[0].0, "aaaa");
+        assert!(state.by_user("robert").is_none(), "the person is forgotten");
+    }
+
+    #[tokio::test]
+    async fn the_person_is_forgotten_even_when_the_farewell_fails_to_send() {
+        // The person asked to be forgotten by clearing the field; that must
+        // happen whether or not the goodbye actually lands.
+        let mut state = State::default();
+        let catalogue = Catalogue::load();
+        known(&mut state, "robert", "robert.42", "aaaa");
+        let users = vec![AuthentikUser {
+            username: "robert".into(),
+            signal_username: None,
+            locale: "de".into(),
+            groups: vec!["Medien".into()],
+        }];
+        let resolve = |_name: String| async { Ok(Some(Aci("unused".into()))) };
+
+        let changes = plan(&state, &users);
+        apply(
+            &mut state,
+            changes,
+            &users,
+            &AlwaysFails,
+            &catalogue,
+            resolve,
+        )
+        .await;
+
+        assert!(
+            state.by_user("robert").is_none(),
+            "forgotten regardless of the failed send"
         );
     }
 
