@@ -41,6 +41,12 @@
           buildPhase = "cargo clippy --all-targets -- -D warnings";
           installPhase = "touch $out";
         });
+        fmt = self.packages.${pkgs.system}.default.overrideAttrs (old: {
+          pname = "signal-seerr-fmt";
+          nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.rustfmt ];
+          buildPhase = "cargo fmt --check";
+          installPhase = "touch $out";
+        });
       });
     };
 }

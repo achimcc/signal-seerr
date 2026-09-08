@@ -5,14 +5,14 @@ title = "Hi {name} — you can now request movies and series here."
 body = """
 Just send me a title and I'll search for it.
 
-/film <title>   searches movies only
-/serie <title>  searches series only
-1 … 5           picks from the results
-m               shows the next results
-/status         what's still on the way for you
-/weg <number>   withdraws a request
-/hilfe          this overview
-/abbruch        forgets the open results list
+/movie <title>       searches movies only
+/series <title>      searches series only
+1 … 5                picks from the results
+more                 shows the next results
+/status              what's still on the way for you
+/withdraw <number>   withdraws a request
+/help                this overview
+/cancel              forgets the open results list
 """
 
 [search]

@@ -129,4 +129,17 @@ mod tests {
         assert!(matches!(Locale::from_authentik(""), Locale::En));
         assert!(matches!(Locale::from_authentik("fr"), Locale::En));
     }
+
+    #[test]
+    fn locale_keeps_its_json_shape() {
+        // Task 7 persists a Locale inside a state file that must survive a
+        // restart. A silently changed representation would make stored state
+        // unreadable, and nothing would say so.
+        assert_eq!(serde_json::to_string(&Locale::De).unwrap(), "\"De\"");
+        assert_eq!(serde_json::to_string(&Locale::En).unwrap(), "\"En\"");
+        assert_eq!(
+            serde_json::from_str::<Locale>("\"En\"").unwrap(),
+            Locale::En
+        );
+    }
 }
