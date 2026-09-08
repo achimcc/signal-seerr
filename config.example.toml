@@ -1,0 +1,24 @@
+# signal-seerr — see README.md
+signal_socket  = "/run/signal-cli/socket"
+signal_account = "+49301234567"
+
+authentik_url        = "http://10.0.20.10:9000"
+authentik_token_file = "/run/credentials/signal-seerr.service/authentik-token"
+
+seerr_url      = "http://10.0.50.10:5055"
+seerr_key_file = "/run/credentials/signal-seerr.service/seerr-key"
+
+webhook_listen     = "0.0.0.0:8080"
+webhook_token_file = "/run/credentials/signal-seerr.service/webhook-token"
+
+state_file = "/var/lib/signal-seerr/state.json"
+
+# How often the directory is reconciled with Authentik. The greeting arrives
+# within this window; see the design doc, section 3.5.
+poll_seconds = 30
+
+# The Authentik group that a person must be in to request anything.
+media_group = "Medien"
+
+# Used in the "it is there" message.
+jellyfin_url = "https://jellyfin.rusty-vault.de"
