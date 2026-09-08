@@ -1,4 +1,4 @@
-use crate::model::{Hit, MediaKind, SeerrUserId};
+use crate::model::{Hit, MediaKind, Pending, PendingState, Seasons, SeerrUserId};
 use crate::secret::Secret;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
@@ -10,6 +10,13 @@ const STATUS_MEANS_ALREADY: &[i64] = &[2, 3, 4, 5];
 #[async_trait]
 pub trait Requests: Send + Sync {
     async fn search(&self, query: &str, kind: Option<MediaKind>, page: u32) -> Result<Vec<Hit>>;
+    async fn user_id(&self, authentik_username: &str) -> Result<Option<SeerrUserId>>;
+    async fn request(&self, hit: &Hit, seasons: Seasons, as_user: SeerrUserId) -> Result<i64>;
+    async fn pending(&self, as_user: SeerrUserId) -> Result<Vec<Pending>>;
+    async fn withdraw(&self, id: i64, as_user: SeerrUserId) -> Result<()>;
+    /// Who asked for this request — the Authentik username, read from Seerr
+    /// rather than taken from a webhook payload. See the note in Task 13.
+    async fn requester_of(&self, request_id: i64) -> Result<Option<String>>;
 }
 
 pub struct SeerrClient {
@@ -34,6 +41,14 @@ impl SeerrClient {
         self.http
             .get(format!("{}{path}", self.base))
             .header("X-Api-Key", self.key.expose())
+    }
+
+    fn post(&self, path: &str, as_user: SeerrUserId) -> reqwest::RequestBuilder {
+        self.http
+            .post(format!("{}{path}", self.base))
+            .header("X-Api-Key", self.key.expose())
+            // Seerr reads this in dist/middleware/auth.js and acts as that user.
+            .header("X-API-User", as_user.0.to_string())
     }
 
     /// Every call goes through here so that no branch can forget to look at
@@ -105,5 +120,129 @@ impl Requests for SeerrClient {
                 })
             })
             .collect())
+    }
+
+    async fn user_id(&self, authentik_username: &str) -> Result<Option<SeerrUserId>> {
+        // Seerr's accounts are created on first Jellyfin login, and Jellyfin
+        // authenticates against Authentik through the LDAP outpost -- so the
+        // jellyfinUsername IS the Authentik username.
+        let response = self
+            .get("/api/v1/user")
+            .query(&[("take", "500")])
+            .send()
+            .await?;
+        let body = self.json(response).await?;
+        Ok(body
+            .get("results")
+            .and_then(|r| r.as_array())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .find(|u| {
+                u.get("jellyfinUsername").and_then(|n| n.as_str()) == Some(authentik_username)
+            })
+            .and_then(|u| u.get("id")?.as_i64())
+            .map(SeerrUserId))
+    }
+
+    async fn request(&self, hit: &Hit, seasons: Seasons, as_user: SeerrUserId) -> Result<i64> {
+        let mut body = serde_json::json!({
+            "mediaId": hit.tmdb_id,
+            "mediaType": match hit.kind { MediaKind::Movie => "movie", MediaKind::Tv => "tv" },
+        });
+        match seasons {
+            Seasons::NotApplicable => {}
+            Seasons::All => body["seasons"] = serde_json::Value::String("all".into()),
+            Seasons::Only(list) => body["seasons"] = serde_json::json!(list),
+        }
+
+        let response = self
+            .post("/api/v1/request", as_user)
+            .json(&body)
+            .send()
+            .await?;
+        let answer = self.json(response).await?;
+        answer
+            .get("id")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("seerr accepted the request but named no id"))
+    }
+
+    async fn pending(&self, as_user: SeerrUserId) -> Result<Vec<Pending>> {
+        let response = self
+            .get(&format!("/api/v1/user/{}/requests", as_user.0))
+            .query(&[("take", "50")])
+            .send()
+            .await?;
+        let body = self.json(response).await?;
+        Ok(body
+            .get("results")
+            .and_then(|r| r.as_array())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|r| {
+                let media = r.get("media")?;
+                Some(Pending {
+                    id: r.get("id")?.as_i64()?,
+                    title: media
+                        .get("title")
+                        .or_else(|| media.get("name"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("?")
+                        .to_string(),
+                    state: match media.get("status").and_then(|s| s.as_i64()) {
+                        Some(5) => PendingState::Available,
+                        Some(3) | Some(4) => PendingState::Fetching,
+                        _ => PendingState::Waiting,
+                    },
+                })
+            })
+            .collect())
+    }
+
+    async fn requester_of(&self, request_id: i64) -> Result<Option<String>> {
+        // The webhook payload's {{requestedBy_username}} is NOT a username --
+        // it maps to request.requestedBy.displayName, which the person can
+        // change in their own Seerr profile. Measured at the running package.
+        // So identity comes from here, through the same field user_id()
+        // matches on: one identity source, not two.
+        let response = self
+            .get(&format!("/api/v1/request/{request_id}"))
+            .send()
+            .await?;
+        let body = self.json(response).await?;
+        Ok(body
+            .get("requestedBy")
+            .and_then(|u| u.get("jellyfinUsername"))
+            .and_then(|n| n.as_str())
+            .filter(|n| !n.is_empty())
+            .map(|n| n.to_string()))
+    }
+
+    async fn withdraw(&self, id: i64, as_user: SeerrUserId) -> Result<()> {
+        // The API key is an administrator, so Seerr would delete anybody's
+        // request. The owner check has to happen here.
+        let response = self.get(&format!("/api/v1/request/{id}")).send().await?;
+        let existing = self.json(response).await?;
+        let owner = existing
+            .get("requestedBy")
+            .and_then(|u| u.get("id"))
+            .and_then(|v| v.as_i64());
+        if owner != Some(as_user.0) {
+            bail!("request {id} is not yours");
+        }
+
+        let response = self
+            .http
+            .delete(format!("{}/api/v1/request/{id}", self.base))
+            .header("X-Api-Key", self.key.expose())
+            .header("X-API-User", as_user.0.to_string())
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("seerr answered {} when withdrawing {id}", response.status());
+        }
+        Ok(())
     }
 }

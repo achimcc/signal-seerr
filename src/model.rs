@@ -27,3 +27,25 @@ pub struct Hit {
     /// Already available or already requested -- searcharr's "Already Added!".
     pub already: bool,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Seasons {
+    /// A movie: the field is not sent at all.
+    NotApplicable,
+    All,
+    Only(Vec<u16>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingState {
+    Waiting,
+    Fetching,
+    Available,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pending {
+    pub id: i64,
+    pub title: String,
+    pub state: PendingState,
+}
