@@ -36,7 +36,7 @@ ready = "„{title}\" ist da.\n{url}"
 failed = "„{title}\" habe ich nicht auftreiben können."
 
 [error]
-unknown_sender = "Ich kenne dich noch nicht. Trag deinen Signal-Namen auf https://rusty-vault.de unter „Dein Konto\" ein, dann melde ich mich."
-not_allowed = "Dein Konto kenne ich, aber es fehlt die Gruppe für die Mediathek. Sag Achim Bescheid."
+unknown_sender = "Ich kenne dich noch nicht. Trag deinen Signal-Namen auf {url} unter „Dein Konto\" ein, dann melde ich mich."
+not_allowed = "Dein Konto kenne ich, aber es fehlt die Gruppe für die Mediathek. Sag {operator} Bescheid."
 seerr_down = "Ich komme gerade nicht an die Wunschliste. Versuch es gleich noch einmal."
 not_understood = "Damit kann ich nichts anfangen. /hilfe zeigt, was geht."

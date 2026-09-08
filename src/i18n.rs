@@ -117,6 +117,44 @@ mod tests {
     }
 
     #[test]
+    fn every_key_uses_the_same_placeholders_in_both_locales() {
+        // both_catalogues_carry_the_same_keys guards the key set; it says
+        // nothing about a key whose German template takes {url} while its
+        // English counterpart still has the value baked in as text -- a
+        // translator adding or dropping a variable would substitute nothing
+        // and leave the literal "{url}" in a message, or format!-panic on
+        // the missing arg key in text()'s replace, silently.
+        let c = Catalogue::load();
+        for key in c.keys(Locale::De) {
+            let de = placeholders(&c.table(Locale::De)[&key]);
+            let en = placeholders(&c.table(Locale::En)[&key]);
+            assert_eq!(de, en, "{key}: de uses {de:?}, en uses {en:?}");
+        }
+    }
+
+    /// The `{name}` tokens `Catalogue::text` substitutes, as a set.
+    fn placeholders(template: &str) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        let mut current = String::new();
+        let mut in_brace = false;
+        for ch in template.chars() {
+            match ch {
+                '{' => {
+                    in_brace = true;
+                    current.clear();
+                }
+                '}' if in_brace => {
+                    in_brace = false;
+                    out.insert(std::mem::take(&mut current));
+                }
+                _ if in_brace => current.push(ch),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
     fn an_unknown_key_yields_the_key_itself() {
         let c = Catalogue::load();
         assert_eq!(c.text(Locale::De, "nope.nothing", &[]), "nope.nothing");

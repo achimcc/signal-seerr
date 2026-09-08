@@ -36,7 +36,7 @@ ready = "\"{title}\" is here.\n{url}"
 failed = "I couldn't track down \"{title}\"."
 
 [error]
-unknown_sender = "I don't know you yet. Add your Signal name at https://rusty-vault.de under \"Your account\", then I'll get back to you."
-not_allowed = "I know your account, but it's missing the group for the media library. Let Achim know."
+unknown_sender = "I don't know you yet. Add your Signal name at {url} under \"Your account\", then I'll get back to you."
+not_allowed = "I know your account, but it's missing the group for the media library. Let {operator} know."
 seerr_down = "I can't reach the request list right now. Try again in a moment."
 not_understood = "I can't do anything with that. /hilfe shows what's possible."
