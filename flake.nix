@@ -17,6 +17,10 @@
           src = self;
           # No hash to keep in step with the sources: the lock file IS the input.
           cargoLock.lockFile = ./Cargo.lock;
+          # aws-lc-sys, pulled in by reqwest's `rustls` feature, builds a C
+          # library with cmake. reqwest 0.13 has no ring-backed alternative
+          # feature, so this is the price of having TLS available at all.
+          nativeBuildInputs = [ pkgs.cmake ];
           meta = {
             description = "Request movies and series through Seerr from a Signal chat";
             license = pkgs.lib.licenses.agpl3Only;
