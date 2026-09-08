@@ -92,13 +92,29 @@ impl SignalClient {
 
         let mut line = serde_json::to_string(&request)?;
         line.push('\n');
-        self.writer.lock().await.write_all(line.as_bytes()).await?;
+        if let Err(e) = self.writer.lock().await.write_all(line.as_bytes()).await {
+            // The entry has to go in before the write (the answer can arrive
+            // before we would otherwise have registered it), so every path
+            // that does not consume it has to take it back out.
+            self.pending.lock().await.remove(&id);
+            return Err(e.into());
+        }
 
         // A call that never comes back would wedge the dialog for good.
-        let answer = tokio::time::timeout(std::time::Duration::from_secs(30), rx)
-            .await
-            .map_err(|_| anyhow!("signal-cli did not answer {method} within 30s"))?
-            .map_err(|_| anyhow!("the signal-cli reader stopped"))?;
+        let answer = match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(answer)) => answer,
+            Ok(Err(_)) => {
+                self.pending.lock().await.remove(&id);
+                return Err(anyhow!("the signal-cli reader stopped"));
+            }
+            Err(_) => {
+                // A slow answer, not a dead socket: the bot carries on, so an
+                // entry left behind here is the leak that actually
+                // accumulates over time.
+                self.pending.lock().await.remove(&id);
+                return Err(anyhow!("signal-cli did not answer {method} within 30s"));
+            }
+        };
 
         answer.map_err(|e| anyhow!("signal-cli rejected {method}: {e}"))
     }
@@ -174,5 +190,45 @@ mod tests {
     #[test]
     fn an_empty_answer_is_none() {
         assert_eq!(aci_from_user_status(&serde_json::json!([])), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_timed_out_call_removes_its_pending_entry() {
+        // signal-cli being merely slow, not the socket being dead, is the
+        // path that keeps happening while the bot otherwise runs fine -- and
+        // it is the one that would grow `pending` by one entry per call,
+        // forever, if the timeout did not clean up after itself.
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("signal-cli.sock");
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        // Accept the connection but never answer it.
+        let accept_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+            drop(stream);
+        });
+
+        let (client, _rx) = SignalClient::connect(&socket_path, "+490000")
+            .await
+            .unwrap();
+
+        let call_task = tokio::spawn({
+            let client = client.clone();
+            async move { client.call("getUserStatus", serde_json::json!({})).await }
+        });
+
+        // The call is now waiting on its oneshot; let the clock run past the
+        // 30s ceiling without actually waiting 30 real seconds.
+        tokio::time::advance(std::time::Duration::from_secs(31)).await;
+
+        let result = call_task.await.unwrap();
+        assert!(result.is_err(), "the call should time out");
+        assert!(
+            client.pending.lock().await.is_empty(),
+            "the timed-out entry must not linger in `pending`"
+        );
+
+        accept_task.abort();
     }
 }
