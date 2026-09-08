@@ -21,6 +21,13 @@
           # library with cmake. reqwest 0.13 has no ring-backed alternative
           # feature, so this is the price of having TLS available at all.
           nativeBuildInputs = [ pkgs.cmake ];
+          # reqwest's `rustls` feature pulls rustls-platform-verifier, which
+          # reads the system certificate store the moment a Client is built --
+          # so even a test that only talks plain HTTP to a local mock trips it.
+          # The sandbox has no such store. reqwest 0.13 offers no bundled-roots
+          # feature to sidestep this (checked against its full feature list),
+          # so the store is handed to the build instead.
+          SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
           meta = {
             description = "Request movies and series through Seerr from a Signal chat";
             license = pkgs.lib.licenses.agpl3Only;

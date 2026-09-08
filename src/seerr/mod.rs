@@ -33,7 +33,11 @@ impl SeerrClient {
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(20))
                 .build()
-                .expect("a client with no TLS surprises"),
+                .expect(
+                    "could not build the HTTP client -- rustls-platform-verifier reads the \
+                     system certificate store as soon as a Client exists, so this fails \
+                     wherever that store is missing; point SSL_CERT_FILE at a CA bundle",
+                ),
         }
     }
 
