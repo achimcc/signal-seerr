@@ -2,7 +2,7 @@
 title = "Hi {name} — you can now request movies and series here."
 
 [farewell]
-goodbye = "I've forgotten your Signal name — enter it again at Rusty Vault whenever you'd like to request movies and series again."
+goodbye = "I've forgotten your Signal name — enter it again in your account settings whenever you'd like to request movies and series again."
 
 [help]
 body = """
