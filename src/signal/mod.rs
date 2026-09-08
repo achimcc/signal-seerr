@@ -74,6 +74,11 @@ impl SignalClient {
         Ok((client, rx))
     }
 
+    /// `params` must be a JSON object. The account gets merged into it below
+    /// via `Value`'s index-assignment, which panics on anything that is
+    /// neither an object nor `null` -- every current call site passes an
+    /// object, but a future one passing an array or a scalar would crash the
+    /// calling task instead of returning an `Err`.
     pub async fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed).to_string();
         let (tx, rx) = oneshot::channel();
@@ -230,5 +235,78 @@ mod tests {
         );
 
         accept_task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_response_reaches_the_call_that_is_waiting_for_it() {
+        // The reader task must route a Response frame to the oneshot
+        // registered under its id -- the single routing decision every other
+        // feature in this crate depends on.
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("signal-cli.sock");
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let server_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read_half, mut write_half) = stream.into_split();
+            let mut lines = BufReader::new(read_half).lines();
+
+            // Take the id from the request `call()` actually sent, not a
+            // hard-coded one -- otherwise the test would still pass even if
+            // `call()` sent one id and waited on another, which is precisely
+            // the defect worth catching.
+            let request_line = lines.next_line().await.unwrap().unwrap();
+            let request: serde_json::Value = serde_json::from_str(&request_line).unwrap();
+            let id = request["id"].as_str().unwrap().to_string();
+
+            // A notification arriving on the same stream while the call is
+            // still in flight must not disturb it -- that is the demux's
+            // real job. Written before the response, so the reader task
+            // processes it first.
+            let note = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "receive",
+                "params": {
+                    "envelope": {
+                        "sourceUuid": "aaaa-bbbb",
+                        "dataMessage": { "message": "blade runner" }
+                    },
+                    "account": "+490000"
+                }
+            });
+            write_half
+                .write_all(format!("{note}\n").as_bytes())
+                .await
+                .unwrap();
+
+            let response = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "timestamp": 1234 }
+            });
+            write_half
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        });
+
+        let (client, mut rx) = SignalClient::connect(&socket_path, "+490000")
+            .await
+            .unwrap();
+
+        let result = client
+            .call("getUserStatus", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(result, serde_json::json!({ "timestamp": 1234 }));
+
+        let incoming = rx
+            .recv()
+            .await
+            .expect("the notification must still arrive, undisturbed by the call in flight");
+        assert_eq!(incoming.from.0, "aaaa-bbbb");
+        assert_eq!(incoming.text, "blade runner");
+
+        server_task.await.unwrap();
     }
 }

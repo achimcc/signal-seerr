@@ -79,10 +79,23 @@ pub fn parse_line(line: &str) -> anyhow::Result<Frame> {
 
     if value.get("method").and_then(|m| m.as_str()) == Some("receive") {
         if let Some(params) = value.get("params") {
-            if let Ok(note) = serde_json::from_value::<Notification>(params.clone()) {
-                return Ok(Frame::Notification {
-                    note: Box::new(note),
-                });
+            match serde_json::from_value::<Notification>(params.clone()) {
+                Ok(note) => {
+                    return Ok(Frame::Notification {
+                        note: Box::new(note),
+                    });
+                }
+                Err(e) => {
+                    // Anything else that fails to parse becomes `Frame::Other`
+                    // without comment -- an unrelated method we do not model
+                    // is routine. This one case is not: signal-cli reshaping
+                    // the envelope is exactly the kind of upstream change
+                    // that should announce itself instead of going quiet.
+                    tracing::warn!(
+                        error = %e,
+                        "cannot parse a receive envelope -- signal-cli's shape may have changed"
+                    );
+                }
             }
         }
     }
