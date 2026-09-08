@@ -3,10 +3,11 @@ use crate::secret::Secret;
 use crate::seerr::Requests;
 use crate::signal::Messenger;
 use crate::state::State;
+use axum::body::Bytes;
 use axum::extract::State as AxumState;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
-use axum::{Json, Router};
+use axum::Router;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -52,7 +53,7 @@ pub fn router(state: WebhookState) -> Router {
 async fn handle(
     AxumState(state): AxumState<WebhookState>,
     headers: HeaderMap,
-    Json(payload): Json<Payload>,
+    body: Bytes,
 ) -> StatusCode {
     let offered = headers
         .get("X-Webhook-Token")
@@ -64,6 +65,18 @@ async fn handle(
     if !state.token.matches(offered) {
         return StatusCode::UNAUTHORIZED;
     }
+
+    // Parsed only now, deliberately: `Json<Payload>` as an extractor would
+    // have deserialised the body before this function even started running
+    // -- axum runs extractors in declaration order, ahead of the handler
+    // body -- so untrusted input would be parsed before it was authenticated.
+    // Taking the raw bytes and parsing by hand keeps the token check first.
+    let Ok(payload) = serde_json::from_slice::<Payload>(&body) else {
+        // A malformed body from an authenticated caller is a real 400: Seerr
+        // sent us something we do not understand, and retrying will not help.
+        tracing::warn!("webhook body did not parse");
+        return StatusCode::BAD_REQUEST;
+    };
 
     let key = match payload.notification_type.as_str() {
         "MEDIA_AVAILABLE" => "available.ready",
@@ -365,6 +378,87 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert!(sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_wrong_token_with_an_unparseable_body_is_still_refused() {
+        // The body is deliberately not JSON at all. Authentication must
+        // happen before any attempt is made to parse it -- a `Json<Payload>`
+        // extractor would run before `handle`'s body and answer 400/415 on
+        // its own, making this 401 branch unreachable for exactly the
+        // requests that matter most (an attacker who does not know the
+        // token and sends garbage).
+        let (app, sent) = test_app();
+        let response = app
+            .oneshot(
+                Request::post("/seerr")
+                    .header("X-Webhook-Token", "wrong")
+                    .header("content-type", "application/json")
+                    .body(Body::from("not json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_correct_token_with_an_unparseable_body_is_a_bad_request() {
+        let (app, sent) = test_app();
+        let response = app
+            .oneshot(
+                Request::post("/seerr")
+                    .header("X-Webhook-Token", "t-o-k-e-n")
+                    .header("content-type", "application/json")
+                    .body(Body::from("not json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(sent.lock().unwrap().is_empty());
+    }
+
+    /// A `Messenger` that always fails, to check the webhook response does
+    /// not depend on delivery succeeding.
+    struct AlwaysFailingMessenger;
+
+    #[async_trait::async_trait]
+    impl Messenger for AlwaysFailingMessenger {
+        async fn send(&self, _to: &Aci, _text: &str) -> anyhow::Result<()> {
+            Err(anyhow::anyhow!("signal-cli is unreachable"))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_delivery_still_answers_200() {
+        // Seerr cannot fix a Signal-side delivery failure by retrying the
+        // webhook -- 200 here means "received", not "delivered", and a 5xx
+        // would start a retry storm over something retrying cannot fix.
+        let mut state = State::default();
+        state.upsert(entry("robert", "aaaa", Locale::De));
+        let webhook_state = WebhookState {
+            messenger: Arc::new(AlwaysFailingMessenger),
+            seerr: Arc::new(FakeSeerr),
+            directory: Arc::new(std::sync::RwLock::new(state)),
+            catalogue: Arc::new(Catalogue::load()),
+            token: Arc::new(Secret::from("t-o-k-e-n".to_string())),
+            jellyfin_url: "https://jellyfin.example.org".to_string(),
+        };
+        let app = router(webhook_state);
+
+        let response = app
+            .oneshot(
+                Request::post("/seerr")
+                    .header("X-Webhook-Token", "t-o-k-e-n")
+                    .header("content-type", "application/json")
+                    .body(body("MEDIA_AVAILABLE", 1849))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
