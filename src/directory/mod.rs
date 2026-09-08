@@ -124,6 +124,13 @@ where
 
                 match resolve(signal_username.clone()).await {
                     Ok(Some(aci)) => {
+                        // Stored before the greeting is attempted: the
+                        // mapping must exist -- so the person can already
+                        // use the bot, and so a later name change plans
+                        // correctly -- even if the send below fails.
+                        // `greeted` starts false and `greet` below only
+                        // flips it once send() actually succeeds, which
+                        // leaves a failure retriable rather than stranded.
                         state.upsert(Entry {
                             authentik_username: username.clone(),
                             signal_username,
@@ -132,18 +139,7 @@ where
                             locale,
                             groups,
                         });
-                        let text = format!(
-                            "{}\n\n{}",
-                            catalogue.text(locale, "greeting.title", &[("name", &username)]),
-                            catalogue.text(locale, "help.body", &[])
-                        );
-                        messenger.send(&aci, &text).await?;
-                        if let Some(entry) = state.remove_user(&username) {
-                            state.upsert(Entry {
-                                greeted: true,
-                                ..entry
-                            });
-                        }
+                        greet(state, messenger, catalogue, &username, &aci, locale).await;
                     }
                     Ok(None) => {
                         // A typo. Nothing is stored, so the next pass produces
@@ -154,6 +150,18 @@ where
                     Err(e) => {
                         tracing::warn!(username, error = %e, "cannot resolve the signal name")
                     }
+                }
+            }
+            Change::Greet { username } => {
+                // plan() only emits this when the entry already exists with
+                // a matching name, so the lookup below should always
+                // succeed; if the entry vanished between plan() and here
+                // (a concurrent removal), there is simply nobody left to
+                // greet.
+                if let Some(entry) = state.by_user(&username).cloned() {
+                    let locale = entry.locale;
+                    let aci = entry.aci.clone();
+                    greet(state, messenger, catalogue, &username, &aci, locale).await;
                 }
             }
             Change::Removed { username, aci: _ } => {
@@ -175,6 +183,40 @@ where
         }
     }
     Ok(())
+}
+
+/// Sends the welcome message and marks the entry greeted on success. A
+/// failed send is logged and left alone -- the entry keeps `greeted: false`,
+/// so the *next* pass's `plan()` emits `Change::Greet` again and this same
+/// function is what actually delivers it then. One unreachable recipient
+/// must not stall, or worse silence forever, everyone else in the pass, so
+/// this never propagates the send error to its caller.
+async fn greet(
+    state: &mut State,
+    messenger: &dyn Messenger,
+    catalogue: &Catalogue,
+    username: &str,
+    aci: &Aci,
+    locale: Locale,
+) {
+    let text = format!(
+        "{}\n\n{}",
+        catalogue.text(locale, "greeting.title", &[("name", username)]),
+        catalogue.text(locale, "help.body", &[])
+    );
+    match messenger.send(aci, &text).await {
+        Ok(()) => {
+            if let Some(entry) = state.remove_user(username) {
+                state.upsert(Entry {
+                    greeted: true,
+                    ..entry
+                });
+            }
+        }
+        Err(e) => {
+            tracing::warn!(username, error = %e, "cannot greet, will retry next pass");
+        }
+    }
 }
 
 /// Wires the pure decision (`plan`) and its side effects (`apply`) to the two
@@ -214,11 +256,12 @@ impl Reconciler {
     }
 
     /// One pass: read Authentik, decide what changed, resolve and greet,
-    /// persist. Within `apply`, a resolve failure is logged and the pass
-    /// carries on with the next change; a send failure stops the pass early
-    /// -- but whatever `apply` already did gets saved regardless, so an
-    /// error here costs only the change it happened on, not the ones
-    /// applied earlier in the same pass.
+    /// persist. `apply` logs and carries on past a single resolve or send
+    /// failure rather than aborting the pass (see `greet`), so it currently
+    /// never fails partway through. State is still saved unconditionally
+    /// before the outcome is propagated, so if a future change to `apply`
+    /// ever does introduce a pass-ending error, whatever it already applied
+    /// is not lost along with it.
     pub async fn run_once(&mut self) -> Result<()> {
         let users = self.authentik.users(&self.fallback_locale).await?;
         let changes = plan(&self.state, &users);
@@ -368,29 +411,88 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FailsAfterFirstSend(Mutex<usize>);
+    struct AlwaysFails;
 
     #[async_trait::async_trait]
-    impl Messenger for FailsAfterFirstSend {
+    impl Messenger for AlwaysFails {
         async fn send(&self, _to: &Aci, _text: &str) -> Result<()> {
-            let mut sent = self.0.lock().unwrap();
-            *sent += 1;
-            if *sent == 1 {
-                Ok(())
-            } else {
-                anyhow::bail!("signal-cli is unhappy")
-            }
+            anyhow::bail!("signal-cli is unreachable")
         }
     }
 
     #[tokio::test]
-    async fn a_send_failure_does_not_undo_a_change_applied_earlier_in_the_same_pass() {
-        // `apply` mutates state change by change and stops at the first
-        // error (`?` on messenger.send). Whoever calls `apply` needs the
-        // partial progress it already made to still be sitting in `state`
-        // afterwards -- that is what `Reconciler::run_once` saves even when
-        // this call errors.
-        let messenger = FailsAfterFirstSend::default();
+    async fn a_failing_send_leaves_the_person_retriable_and_the_next_pass_greets_them() {
+        // This is the property the design's whole poll-over-webhook argument
+        // depends on: nothing is missed for good, a later pass catches up.
+        // A send failure here must not be the one place that promise breaks.
+        let mut state = State::default();
+        let catalogue = Catalogue::load();
+        let users = vec![AuthentikUser {
+            username: "robert".into(),
+            signal_username: Some("robert.42".into()),
+            locale: "de".into(),
+            groups: vec!["Medien".into()],
+        }];
+        let resolve = |_name: String| async { Ok(Some(Aci("aaaa".into()))) };
+
+        // First pass: the send fails.
+        let changes = plan(&state, &users);
+        apply(
+            &mut state,
+            changes,
+            &users,
+            &AlwaysFails,
+            &catalogue,
+            resolve,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            state.by_user("robert").map(|e| e.greeted),
+            Some(false),
+            "the mapping exists, but the welcome never went out"
+        );
+
+        // Second pass: plan() must ask for the greeting again ...
+        let changes = plan(&state, &users);
+        assert_eq!(
+            changes,
+            vec![Change::Greet {
+                username: "robert".into()
+            }]
+        );
+
+        // ... and this time, with a working messenger, it goes through.
+        let messenger = Arc::new(Sent::default());
+        apply(
+            &mut state,
+            changes,
+            &users,
+            &*messenger,
+            &catalogue,
+            resolve,
+        )
+        .await
+        .unwrap();
+        assert_eq!(messenger.0.lock().unwrap().len(), 1);
+        assert!(state.by_user("robert").unwrap().greeted);
+    }
+
+    #[derive(Default)]
+    struct FailsForOneAci(String);
+
+    #[async_trait::async_trait]
+    impl Messenger for FailsForOneAci {
+        async fn send(&self, to: &Aci, _text: &str) -> Result<()> {
+            if to.0 == self.0 {
+                anyhow::bail!("unreachable: {}", to.0);
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn one_failing_recipient_does_not_block_the_others_in_the_same_pass() {
         let mut state = State::default();
         let catalogue = Catalogue::load();
         let users = vec![
@@ -408,21 +510,24 @@ mod tests {
             },
         ];
         let resolve = |name: String| async move { Ok(Some(Aci(format!("aci-{name}")))) };
+        // "a" resolves to an ACI the messenger refuses; "b" resolves fine.
+        let messenger = FailsForOneAci("aci-a.1".to_string());
 
         let changes = plan(&state, &users);
-        let err = apply(&mut state, changes, &users, &messenger, &catalogue, resolve).await;
+        apply(&mut state, changes, &users, &messenger, &catalogue, resolve)
+            .await
+            .unwrap();
 
-        assert!(err.is_err(), "the second send must fail the pass");
-        assert!(
-            state.by_user("a").is_some(),
-            "the change applied before the failing one must survive"
+        assert_eq!(
+            state.by_user("a").map(|e| e.greeted),
+            Some(false),
+            "a is retriable, not lost"
         );
-        // `apply` pins the entry (with greeted: false) before it calls
-        // send(), so a failed send still leaves "b" in state -- just not
-        // marked greeted. See the Concerns section of the task report: since
-        // plan() only reacts to a *changed* name, nothing currently retries
-        // this greeting on a later pass.
-        assert_eq!(state.by_user("b").map(|e| e.greeted), Some(false));
+        assert_eq!(
+            state.by_user("b").map(|e| e.greeted),
+            Some(true),
+            "b must still be greeted despite a's failure"
+        );
     }
 
     #[test]

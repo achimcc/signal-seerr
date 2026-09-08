@@ -41,6 +41,10 @@ pub enum Change {
         signal_username: String,
         held_by: String,
     },
+    /// The mapping already exists and the name hasn't changed, but the
+    /// welcome never went out -- a prior send failed. Retry it; nothing else
+    /// about the entry changes.
+    Greet { username: String },
 }
 
 pub fn plan(state: &State, users: &[AuthentikUser]) -> Vec<Change> {
@@ -69,8 +73,15 @@ pub fn plan(state: &State, users: &[AuthentikUser]) -> Vec<Change> {
         };
 
         let existing = state.by_user(&user.username);
-        if existing.is_some_and(|e| e.signal_username.eq_ignore_ascii_case(wanted)) {
-            continue;
+        if let Some(e) = existing {
+            if e.signal_username.eq_ignore_ascii_case(wanted) {
+                if !e.greeted {
+                    changes.push(Change::Greet {
+                        username: user.username.clone(),
+                    });
+                }
+                continue;
+            }
         }
 
         let key = wanted.to_lowercase();
@@ -160,6 +171,33 @@ mod tests {
         let mut state = State::default();
         known(&mut state, "robert", "robert.42", "aaaa");
         assert!(plan(&state, &[user("robert", Some("robert.42"))]).is_empty());
+    }
+
+    fn known_but_not_greeted(state: &mut State, name: &str, signal: &str, aci: &str) {
+        state.upsert(Entry {
+            authentik_username: name.into(),
+            signal_username: signal.into(),
+            aci: Aci(aci.into()),
+            greeted: false,
+            locale: Locale::De,
+            groups: vec!["Medien".into()],
+        });
+    }
+
+    #[test]
+    fn an_unfinished_greeting_is_retried() {
+        // The mapping is already right (name matches), but a prior send
+        // failed and `greeted` never flipped. plan() must not treat this as
+        // "nothing changed" -- silence here would be permanent.
+        let mut state = State::default();
+        known_but_not_greeted(&mut state, "robert", "robert.42", "aaaa");
+        let got = plan(&state, &[user("robert", Some("robert.42"))]);
+        assert_eq!(
+            got,
+            vec![Change::Greet {
+                username: "robert".into()
+            }]
+        );
     }
 
     #[test]
