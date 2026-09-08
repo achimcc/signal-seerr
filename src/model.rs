@@ -14,3 +14,16 @@ pub enum MediaKind {
     Movie,
     Tv,
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hit {
+    pub tmdb_id: i64,
+    pub kind: MediaKind,
+    pub title: String,
+    pub year: Option<u16>,
+    pub rating: Option<f32>,
+    /// 0 for movies.
+    pub seasons: u16,
+    /// Already available or already requested -- searcharr's "Already Added!".
+    pub already: bool,
+}
