@@ -209,3 +209,89 @@ async fn withdrawing_somebody_elses_request_is_refused_before_it_is_sent() {
         .to_string();
     assert!(err.contains("not yours"), "got: {err}");
 }
+
+use signal_seerr::model::{Pending, PendingState};
+
+#[tokio::test]
+async fn pending_maps_status_and_falls_back_to_the_series_name() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/user/12/requests"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "pageInfo": { "pages": 1, "results": 4 },
+            "results": [
+                { "id": 1, "media": { "title": "Blade Runner 2049", "status": 5 } },
+                { "id": 2, "media": { "name": "Andor", "status": 3 } },
+                { "id": 3, "media": { "name": "The Bear", "status": 4 } },
+                { "id": 4, "media": { "title": "Untitled Film", "status": 1 } }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let items = client(&server).pending(SeerrUserId(12)).await.unwrap();
+
+    assert_eq!(
+        items,
+        vec![
+            Pending {
+                id: 1,
+                title: "Blade Runner 2049".into(),
+                state: PendingState::Available
+            },
+            Pending {
+                id: 2,
+                title: "Andor".into(),
+                state: PendingState::Fetching
+            },
+            Pending {
+                id: 3,
+                title: "The Bear".into(),
+                state: PendingState::Fetching
+            },
+            Pending {
+                id: 4,
+                title: "Untitled Film".into(),
+                state: PendingState::Waiting
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn requester_of_reads_the_jellyfin_username() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/request/1849"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 1849,
+            "requestedBy": { "jellyfinUsername": "achim", "displayName": "Achim Schneider" }
+        })))
+        .mount(&server)
+        .await;
+
+    let who = client(&server).requester_of(1849).await.unwrap();
+    assert_eq!(who, Some("achim".to_string()));
+}
+
+#[tokio::test]
+async fn requester_of_ignores_the_editable_display_name() {
+    // {{requestedBy_username}} in Seerr's webhook payload maps to
+    // displayName, which the person can change in their own profile --
+    // identity has to come from jellyfinUsername instead, even when Seerr
+    // sends an empty one alongside a populated displayName. If this ever
+    // drifted back to reading displayName, this is the test that would say
+    // so.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/request/1850"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 1850,
+            "requestedBy": { "jellyfinUsername": "", "displayName": "Somebody Else" }
+        })))
+        .mount(&server)
+        .await;
+
+    let who = client(&server).requester_of(1850).await.unwrap();
+    assert_eq!(who, None, "must not fall back to the editable display name");
+}
