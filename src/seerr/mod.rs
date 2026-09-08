@@ -19,6 +19,33 @@ pub trait Requests: Send + Sync {
     async fn requester_of(&self, request_id: i64) -> Result<Option<String>>;
 }
 
+/// Lets an `Arc<SeerrClient>` satisfy `R: Requests` directly, so the same
+/// `Arc` that is shared into the webhook (as `Arc<dyn Requests>`, via the
+/// ordinary unsized coercion) can also be moved into `Dialog`, which is
+/// generic over `R: Requests` and takes it by value. Without this, the
+/// client would have to be duplicated or `Dialog` given its own connection.
+#[async_trait]
+impl<T: Requests + ?Sized> Requests for std::sync::Arc<T> {
+    async fn search(&self, query: &str, kind: Option<MediaKind>, page: u32) -> Result<Vec<Hit>> {
+        (**self).search(query, kind, page).await
+    }
+    async fn user_id(&self, authentik_username: &str) -> Result<Option<SeerrUserId>> {
+        (**self).user_id(authentik_username).await
+    }
+    async fn request(&self, hit: &Hit, seasons: Seasons, as_user: SeerrUserId) -> Result<i64> {
+        (**self).request(hit, seasons, as_user).await
+    }
+    async fn pending(&self, as_user: SeerrUserId) -> Result<Vec<Pending>> {
+        (**self).pending(as_user).await
+    }
+    async fn withdraw(&self, id: i64, as_user: SeerrUserId) -> Result<()> {
+        (**self).withdraw(id, as_user).await
+    }
+    async fn requester_of(&self, request_id: i64) -> Result<Option<String>> {
+        (**self).requester_of(request_id).await
+    }
+}
+
 pub struct SeerrClient {
     base: String,
     key: Secret,
