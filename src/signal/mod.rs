@@ -102,6 +102,31 @@ impl SignalClient {
 
         answer.map_err(|e| anyhow!("signal-cli rejected {method}: {e}"))
     }
+
+    /// Resolves a Signal username ("achim.42") to the account id behind it.
+    /// `Ok(None)` means the name does not exist -- a typo, not a failure.
+    pub async fn resolve_username(&self, username: &str) -> Result<Option<Aci>> {
+        let answer = self
+            .call(
+                "getUserStatus",
+                serde_json::json!({ "username": [username] }),
+            )
+            .await?;
+        Ok(aci_from_user_status(&answer))
+    }
+
+    /// Sets the bot's own username, so nobody sees the server's phone number.
+    /// Returns the full name including the discriminator signal assigns.
+    pub async fn set_username(&self, username: &str) -> Result<String> {
+        let answer = self
+            .call("updateAccount", serde_json::json!({ "username": username }))
+            .await?;
+        Ok(answer
+            .get("username")
+            .and_then(|v| v.as_str())
+            .unwrap_or(username)
+            .to_string())
+    }
 }
 
 #[async_trait]
@@ -113,5 +138,41 @@ impl Messenger for SignalClient {
         )
         .await
         .map(|_| ())
+    }
+}
+
+fn aci_from_user_status(answer: &serde_json::Value) -> Option<Aci> {
+    answer
+        .as_array()?
+        .iter()
+        .find_map(|entry| entry.get("uuid")?.as_str().map(|s| Aci(s.to_string())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_known_username_yields_its_aci() {
+        let answer = serde_json::json!([
+            { "recipient": "u:achim.42", "number": null, "uuid": "aaaa-bbbb", "isRegistered": true }
+        ]);
+        assert_eq!(aci_from_user_status(&answer), Some(Aci("aaaa-bbbb".into())));
+    }
+
+    #[test]
+    fn an_unknown_username_is_none_not_an_error() {
+        // signal-cli answers with an entry whose uuid is null rather than with
+        // an empty list. Reading "the list is not empty" as "the name exists"
+        // would pin a mapping onto None.
+        let answer = serde_json::json!([
+            { "recipient": "u:nope.99", "number": null, "uuid": null, "isRegistered": false }
+        ]);
+        assert_eq!(aci_from_user_status(&answer), None);
+    }
+
+    #[test]
+    fn an_empty_answer_is_none() {
+        assert_eq!(aci_from_user_status(&serde_json::json!([])), None);
     }
 }
