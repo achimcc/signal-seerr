@@ -1,4 +1,5 @@
 pub mod config;
+pub mod dialog;
 pub mod directory;
 pub mod i18n;
 pub mod model;

@@ -22,6 +22,9 @@ more                 shows the next results
 none = "I can't find anything for that."
 footer = "Reply with the number. \"m\" shows more."
 no_more = "There's nothing more."
+kind_movie = "Movie"
+kind_tv = "Series"
+already = "✓ already there"
 
 [request]
 placed = "{title} is on the list. I'll let you know once it's here.\nWrong one? /weg {id} takes it off again."

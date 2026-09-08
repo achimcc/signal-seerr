@@ -22,6 +22,9 @@ m               zeigt die nächsten Treffer
 none = "Dazu finde ich nichts."
 footer = "Antworte mit der Nummer. „m\" zeigt mehr."
 no_more = "Mehr habe ich nicht."
+kind_movie = "Film"
+kind_tv = "Serie"
+already = "✓ schon da"
 
 [request]
 placed = "{title} ist eingetragen. Ich melde mich, sobald es da ist.\nVertippt? /weg {id} nimmt es wieder raus."
