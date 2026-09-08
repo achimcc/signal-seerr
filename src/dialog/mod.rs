@@ -1,6 +1,6 @@
 use crate::directory::Directory;
 use crate::i18n::{Catalogue, Locale};
-use crate::model::{Aci, Hit, MediaKind, PendingState, Seasons};
+use crate::model::{Aci, Hit, MediaKind, PendingState, Seasons, SeerrUserId};
 use crate::seerr::Requests;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -95,6 +95,30 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         &self.seerr
     }
 
+    /// Test seam: inserts `conversation` as though it had been created
+    /// `age` ago, so a test can exercise the `RESULTS_LIVE` expiry directly
+    /// instead of asserting a property that a missing conversation would
+    /// already satisfy on its own. `#[cfg(test)]` means this never ships --
+    /// and, being compiled only for the crate's own unit tests, it is not
+    /// reachable from `tests/dialog.rs` either, which is why the two tests
+    /// that use it live next to this method instead.
+    #[cfg(test)]
+    fn insert_conversation_aged(
+        &mut self,
+        from: &Aci,
+        mut conversation: Conversation,
+        age: Duration,
+    ) {
+        let at = Instant::now()
+            .checked_sub(age)
+            .expect("age must not exceed how long this process has been up");
+        match &mut conversation {
+            Conversation::Idle => {}
+            Conversation::Results { at: a, .. } | Conversation::Seasons { at: a, .. } => *a = at,
+        }
+        self.conversations.insert(from.clone(), conversation);
+    }
+
     pub async fn handle(&mut self, from: &Aci, text: &str) -> Vec<String> {
         let Some(member) = self.directory.lookup(from) else {
             return self.tell_stranger_once(from);
@@ -111,29 +135,26 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         let text = text.trim();
         let lowered = text.to_lowercase();
 
+        // /abbruch and /hilfe are the only two ways OUT of a stuck
+        // conversation, so they must work no matter what is open: answering
+        // "which seasons?" to someone who typed /abbruch (wants out) or
+        // /hilfe (is stuck and asking what they can type) would trap them
+        // in exactly the question they are trying to escape or understand.
+        // Every other command below is deliberately swallowed by an open
+        // seasons question instead -- do not "tidy" these two back down into
+        // that general case.
         match lowered.as_str() {
             "/hilfe" | "/help" => return vec![self.catalogue.text(locale, "help.body", &[])],
             "/abbruch" | "/cancel" => {
                 self.conversations.remove(from);
                 return vec![];
             }
-            "m" | "mehr" | "more" => return self.next_page(from, locale).await,
-            "/status" => return self.status(from, locale).await,
             _ => {}
         }
 
-        if let Some(query) = strip_command(text, &lowered, &["/film ", "/movie "]) {
-            return self
-                .search(from, locale, query, Some(MediaKind::Movie), 1)
-                .await;
-        }
-        if let Some(query) = strip_command(text, &lowered, &["/serie ", "/series "]) {
-            return self
-                .search(from, locale, query, Some(MediaKind::Tv), 1)
-                .await;
-        }
-
-        // An open seasons question swallows the next message, whatever it is.
+        // An open seasons question swallows the next message, whatever it is
+        // -- /status, /weg, "m", a bare title, all of it -- barring the two
+        // escapes handled above.
         if let Some(Conversation::Seasons { hit, at }) = self.conversations.get(from).cloned() {
             if at.elapsed() <= RESULTS_LIVE {
                 return self.place_series(from, locale, hit, text).await;
@@ -151,6 +172,23 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
                 // Stale list: fall through, so "2" searches for "2" again.
                 self.conversations.remove(from);
             }
+        }
+
+        match lowered.as_str() {
+            "m" | "mehr" | "more" => return self.next_page(from, locale).await,
+            "/status" => return self.status(from, locale).await,
+            _ => {}
+        }
+
+        if let Some(query) = strip_command(text, &lowered, &["/film ", "/movie "]) {
+            return self
+                .search(from, locale, query, Some(MediaKind::Movie), 1)
+                .await;
+        }
+        if let Some(query) = strip_command(text, &lowered, &["/serie ", "/series "]) {
+            return self
+                .search(from, locale, query, Some(MediaKind::Tv), 1)
+                .await;
         }
 
         if lowered == "/weg"
@@ -234,6 +272,31 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         self.place(from, locale, &hit, seasons).await
     }
 
+    /// The lookup `place`, `status`, and `withdraw` all need before they can
+    /// do anything: the directory entry for `from`, and the Seerr account
+    /// that goes with it. Before this existed, two of those three copies
+    /// collapsed "no directory entry" (silent, `vec![]`) into "no Seerr
+    /// account or Seerr unreachable" (`error.seerr_down`, logged) instead of
+    /// keeping them apart the way `place`'s copy did -- an inconsistency
+    /// that cost nothing today but would have bitten whoever next copied the
+    /// "wrong" one of the three.
+    async fn seerr_user(&mut self, from: &Aci, locale: Locale) -> Result<SeerrUserId, Vec<String>> {
+        let Some(member) = self.directory.lookup(from) else {
+            return Err(vec![]);
+        };
+        match self.seerr.user_id(&member.authentik_username).await {
+            Ok(Some(id)) => Ok(id),
+            Ok(None) => {
+                tracing::warn!(user = member.authentik_username, "no seerr account");
+                Err(vec![self.catalogue.text(locale, "error.seerr_down", &[])])
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot look up the seerr account");
+                Err(vec![self.catalogue.text(locale, "error.seerr_down", &[])])
+            }
+        }
+    }
+
     async fn place(
         &mut self,
         from: &Aci,
@@ -241,19 +304,9 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         hit: &Hit,
         seasons: Seasons,
     ) -> Vec<String> {
-        let Some(member) = self.directory.lookup(from) else {
-            return vec![];
-        };
-        let user = match self.seerr.user_id(&member.authentik_username).await {
-            Ok(Some(id)) => id,
-            Ok(None) => {
-                tracing::warn!(user = member.authentik_username, "no seerr account");
-                return vec![self.catalogue.text(locale, "error.seerr_down", &[])];
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "cannot look up the seerr account");
-                return vec![self.catalogue.text(locale, "error.seerr_down", &[])];
-            }
+        let user = match self.seerr_user(from, locale).await {
+            Ok(id) => id,
+            Err(message) => return message,
         };
 
         self.conversations.remove(from);
@@ -271,11 +324,9 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
     }
 
     async fn status(&mut self, from: &Aci, locale: Locale) -> Vec<String> {
-        let Some(member) = self.directory.lookup(from) else {
-            return vec![];
-        };
-        let Ok(Some(user)) = self.seerr.user_id(&member.authentik_username).await else {
-            return vec![self.catalogue.text(locale, "error.seerr_down", &[])];
+        let user = match self.seerr_user(from, locale).await {
+            Ok(id) => id,
+            Err(message) => return message,
         };
         match self.seerr.pending(user).await {
             Ok(list) if list.is_empty() => {
@@ -317,11 +368,9 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         else {
             return vec![self.catalogue.text(locale, "error.not_understood", &[])];
         };
-        let Some(member) = self.directory.lookup(from) else {
-            return vec![];
-        };
-        let Ok(Some(user)) = self.seerr.user_id(&member.authentik_username).await else {
-            return vec![self.catalogue.text(locale, "error.seerr_down", &[])];
+        let user = match self.seerr_user(from, locale).await {
+            Ok(id) => id,
+            Err(message) => return message,
         };
         match self.seerr.withdraw(id, user).await {
             Ok(()) => {
@@ -490,5 +539,151 @@ mod tests {
         assert_eq!(told.len(), 1, "the stale entry must be gone");
         assert!(told.contains_key(&Aci("fresh".into())));
         assert!(!told.contains_key(&Aci("old".into())));
+    }
+
+    // --- Backdated-conversation expiry -------------------------------
+    //
+    // `a_digit_with_no_open_list_is_a_search` (tests/dialog.rs) never opens
+    // a conversation at all, so it proves the *empty* case, not expiry --
+    // delete the `at.elapsed() <= RESULTS_LIVE` guards entirely and every
+    // test in the suite still passes. These two use `insert_conversation_aged`
+    // to plant a conversation that is provably past `RESULTS_LIVE` and check
+    // that it is treated as gone.
+
+    use crate::directory::Member;
+    use crate::model::{Pending, SeerrUserId};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct ExpirySeerr {
+        placed: Mutex<Vec<(i64, Seasons, SeerrUserId)>>,
+        queries: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Requests for ExpirySeerr {
+        async fn search(
+            &self,
+            q: &str,
+            _kind: Option<MediaKind>,
+            _page: u32,
+        ) -> anyhow::Result<Vec<Hit>> {
+            self.queries.lock().unwrap().push(q.to_string());
+            Ok(vec![])
+        }
+        async fn user_id(&self, _u: &str) -> anyhow::Result<Option<SeerrUserId>> {
+            Ok(Some(SeerrUserId(12)))
+        }
+        async fn request(
+            &self,
+            hit: &Hit,
+            seasons: Seasons,
+            as_user: SeerrUserId,
+        ) -> anyhow::Result<i64> {
+            self.placed
+                .lock()
+                .unwrap()
+                .push((hit.tmdb_id, seasons, as_user));
+            Ok(1849)
+        }
+        async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Pending>> {
+            Ok(vec![])
+        }
+        async fn withdraw(&self, _id: i64, _u: SeerrUserId) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn requester_of(&self, _id: i64) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
+    }
+
+    struct ExpiryDirectory;
+    impl Directory for ExpiryDirectory {
+        fn lookup(&self, _aci: &Aci) -> Option<Member> {
+            Some(Member {
+                authentik_username: "robert".into(),
+                locale: Locale::De,
+                allowed: true,
+            })
+        }
+    }
+
+    fn expiry_hit() -> Hit {
+        Hit {
+            tmdb_id: 1,
+            kind: MediaKind::Movie,
+            title: "A".into(),
+            year: None,
+            rating: None,
+            seasons: 0,
+            already: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_digit_against_a_backdated_results_list_is_a_fresh_search() {
+        let mut d = Dialog::new(
+            ExpirySeerr::default(),
+            ExpiryDirectory,
+            Catalogue::load(),
+            "https://example.invalid".to_string(),
+            "the operator".to_string(),
+        );
+        let aci = Aci("aaaa".into());
+        d.insert_conversation_aged(
+            &aci,
+            Conversation::Results {
+                query: "old".into(),
+                kind: None,
+                page: 1,
+                hits: vec![expiry_hit()],
+                at: Instant::now(),
+            },
+            RESULTS_LIVE + Duration::from_secs(1),
+        );
+
+        d.handle(&aci, "2").await;
+
+        assert_eq!(
+            d.seerr_ref().queries.lock().unwrap().as_slice(),
+            ["2"],
+            "a backdated list must not be chosen from -- it must search for '2'"
+        );
+        assert!(
+            d.seerr_ref().placed.lock().unwrap().is_empty(),
+            "must not have placed anything from a stale list"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_seasons_answer_against_a_backdated_question_does_not_place_a_request() {
+        let mut d = Dialog::new(
+            ExpirySeerr::default(),
+            ExpiryDirectory,
+            Catalogue::load(),
+            "https://example.invalid".to_string(),
+            "the operator".to_string(),
+        );
+        let aci = Aci("aaaa".into());
+        let series = Hit {
+            kind: MediaKind::Tv,
+            seasons: 2,
+            ..expiry_hit()
+        };
+        d.insert_conversation_aged(
+            &aci,
+            Conversation::Seasons {
+                hit: series,
+                at: Instant::now(),
+            },
+            RESULTS_LIVE + Duration::from_secs(1),
+        );
+
+        d.handle(&aci, "alle").await;
+
+        assert!(
+            d.seerr_ref().placed.lock().unwrap().is_empty(),
+            "a backdated seasons question must not still accept an answer"
+        );
     }
 }

@@ -610,3 +610,104 @@ async fn help_is_the_same_text_as_the_greeting() {
     let catalogue = Catalogue::load();
     assert_eq!(out[0], catalogue.text(Locale::De, "help.body", &[]));
 }
+
+/// Sets up a `Dialog` mid-seasons-question: a series was picked and is now
+/// waiting on an answer.
+async fn dialog_mid_seasons_question(seasons: u16) -> (Dialog<FakeSeerr, FakeDirectory>, Aci) {
+    let series = Hit {
+        kind: MediaKind::Tv,
+        seasons,
+        ..movie(4321, "Andor")
+    };
+    let seerr = FakeSeerr {
+        hits: vec![series],
+        ..Default::default()
+    };
+    let mut d = dialog(seerr, true);
+    let aci = Aci("aaaa".into());
+    d.handle(&aci, "andor").await;
+    d.handle(&aci, "1").await;
+    (d, aci)
+}
+
+#[tokio::test]
+async fn status_mid_seasons_question_re_asks_instead_of_listing() {
+    let (mut d, aci) = dialog_mid_seasons_question(2).await;
+    let out = d.handle(&aci, "/status").await;
+    assert!(
+        out[0].contains("Staffeln"),
+        "must re-ask, not list: {}",
+        out[0]
+    );
+}
+
+#[tokio::test]
+async fn abbruch_mid_seasons_question_clears_it_and_a_following_digit_is_a_fresh_search() {
+    let (mut d, aci) = dialog_mid_seasons_question(2).await;
+    let cancelled = d.handle(&aci, "/abbruch").await;
+    assert!(cancelled.is_empty(), "got: {cancelled:?}");
+
+    d.handle(&aci, "3").await;
+    // A seasons answer never reaches `seerr.search` -- only a fresh search
+    // does. Finding "3" in the recorded queries is proof the digit was
+    // *not* read as an answer to the (supposedly cleared) seasons question.
+    assert_eq!(
+        d.seerr_ref().queries.lock().unwrap().as_slice(),
+        ["andor", "3"],
+        "the digit must reach seerr as a fresh search, not be read as a season"
+    );
+    assert!(
+        placed(&d).is_empty(),
+        "must not have placed anything for '3'"
+    );
+}
+
+#[tokio::test]
+async fn hilfe_mid_seasons_question_answers_and_leaves_the_question_open() {
+    let (mut d, aci) = dialog_mid_seasons_question(3).await;
+    let help = d.handle(&aci, "/hilfe").await;
+    let catalogue = Catalogue::load();
+    assert_eq!(help[0], catalogue.text(Locale::De, "help.body", &[]));
+
+    // The question must still be open: an answer now completes the request.
+    let done = d.handle(&aci, "alle").await;
+    assert!(
+        done[0].contains("eingetragen"),
+        "the seasons question was lost: {}",
+        done[0]
+    );
+}
+
+#[tokio::test]
+async fn season_zero_is_refused() {
+    let (mut d, aci) = dialog_mid_seasons_question(2).await;
+    let out = d.handle(&aci, "0").await;
+    assert!(out[0].contains("Staffeln"), "asked again, got: {}", out[0]);
+    assert!(placed(&d).is_empty());
+}
+
+#[tokio::test]
+async fn a_season_number_equal_to_the_count_is_accepted() {
+    let (mut d, aci) = dialog_mid_seasons_question(2).await;
+    let out = d.handle(&aci, "2").await;
+    assert!(out[0].contains("eingetragen"), "got: {}", out[0]);
+    let list = placed(&d);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].1, Seasons::Only(vec![2]));
+}
+
+#[tokio::test]
+async fn an_empty_seasons_answer_is_refused() {
+    let (mut d, aci) = dialog_mid_seasons_question(2).await;
+    let out = d.handle(&aci, "   ").await;
+    assert!(out[0].contains("Staffeln"), "asked again, got: {}", out[0]);
+    assert!(placed(&d).is_empty());
+}
+
+#[tokio::test]
+async fn a_non_numeric_seasons_answer_is_refused() {
+    let (mut d, aci) = dialog_mid_seasons_question(2).await;
+    let out = d.handle(&aci, "eins").await;
+    assert!(out[0].contains("Staffeln"), "asked again, got: {}", out[0]);
+    assert!(placed(&d).is_empty());
+}
