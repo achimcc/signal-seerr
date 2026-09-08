@@ -1,0 +1,42 @@
+[greeting]
+title = "Hi {name} — you can now request movies and series here."
+
+[help]
+body = """
+Just send me a title and I'll search for it.
+
+/film <title>   searches movies only
+/serie <title>  searches series only
+1 … 5           picks from the results
+m               shows the next results
+/status         what's still on the way for you
+/weg <number>   withdraws a request
+/hilfe          this overview
+/abbruch        forgets the open results list
+"""
+
+[search]
+none = "I can't find anything for that."
+footer = "Reply with the number. \"m\" shows more."
+no_more = "There's nothing more."
+
+[request]
+placed = "{title} is on the list. I'll let you know once it's here.\nWrong one? /weg {id} takes it off again."
+already = "{title} is already there."
+seasons_question = "{title} — which seasons? \"all\", or numbers like \"1 2\"."
+withdrawn = "Request {id} has been withdrawn."
+unknown_id = "I don't have a request from you with the number {id}."
+
+[status]
+empty = "There's nothing of yours on the way right now."
+line = "{id}: {title} — {state}"
+
+[available]
+ready = "\"{title}\" is here.\n{url}"
+failed = "I couldn't track down \"{title}\"."
+
+[error]
+unknown_sender = "I don't know you yet. Add your Signal name at https://rusty-vault.de under \"Your account\", then I'll get back to you."
+not_allowed = "I know your account, but it's missing the group for the media library. Let Achim know."
+seerr_down = "I can't reach the request list right now. Try again in a moment."
+not_understood = "I can't do anything with that. /hilfe shows what's possible."

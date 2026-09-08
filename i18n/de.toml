@@ -1,0 +1,42 @@
+[greeting]
+title = "Hallo {name} — ab jetzt kannst du dir hier Filme und Serien wünschen."
+
+[help]
+body = """
+Schreib mir einfach einen Titel, dann suche ich.
+
+/film <titel>   sucht nur Filme
+/serie <titel>  sucht nur Serien
+1 … 5           wählt aus der Trefferliste
+m               zeigt die nächsten Treffer
+/status         was von dir noch unterwegs ist
+/weg <nummer>   nimmt einen Wunsch zurück
+/hilfe          diese Übersicht
+/abbruch        vergisst die offene Trefferliste
+"""
+
+[search]
+none = "Dazu finde ich nichts."
+footer = "Antworte mit der Nummer. „m\" zeigt mehr."
+no_more = "Mehr habe ich nicht."
+
+[request]
+placed = "{title} ist eingetragen. Ich melde mich, sobald es da ist.\nVertippt? /weg {id} nimmt es wieder raus."
+already = "{title} gibt es schon."
+seasons_question = "{title} — welche Staffeln? „alle\", oder Nummern wie „1 2\"."
+withdrawn = "Wunsch {id} ist zurückgenommen."
+unknown_id = "Einen Wunsch mit der Nummer {id} habe ich von dir nicht."
+
+[status]
+empty = "Von dir ist gerade nichts unterwegs."
+line = "{id}: {title} — {state}"
+
+[available]
+ready = "„{title}\" ist da.\n{url}"
+failed = "„{title}\" habe ich nicht auftreiben können."
+
+[error]
+unknown_sender = "Ich kenne dich noch nicht. Trag deinen Signal-Namen auf https://rusty-vault.de unter „Dein Konto\" ein, dann melde ich mich."
+not_allowed = "Dein Konto kenne ich, aber es fehlt die Gruppe für die Mediathek. Sag Achim Bescheid."
+seerr_down = "Ich komme gerade nicht an die Wunschliste. Versuch es gleich noch einmal."
+not_understood = "Damit kann ich nichts anfangen. /hilfe zeigt, was geht."
