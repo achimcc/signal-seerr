@@ -1,5 +1,5 @@
 use crate::secret::Secret;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -24,7 +24,23 @@ impl Config {
     pub fn load(path: &Path) -> Result<Config> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("cannot read config {}", path.display()))?;
-        toml::from_str(&raw).with_context(|| format!("cannot parse config {}", path.display()))
+        let cfg: Config = toml::from_str(&raw)
+            .with_context(|| format!("cannot parse config {}", path.display()))?;
+        reject_missing_scheme("authentik_url", &cfg.authentik_url)?;
+        reject_missing_scheme("seerr_url", &cfg.seerr_url)?;
+        // Plain http:// is this deployment's deliberate choice today (see
+        // the design doc's zone note), not a mistake -- so this is a
+        // warning, not a rejection. But the day somebody wonders whether a
+        // token crosses the wire in the clear, the answer belongs in the
+        // journal rather than in memory.
+        for (field, value) in plain_http_fields(&cfg) {
+            tracing::warn!(
+                field,
+                value,
+                "credentials for this endpoint cross the network unencrypted (http://)"
+            );
+        }
+        Ok(cfg)
     }
 
     #[cfg(test)]
@@ -44,6 +60,31 @@ impl Config {
             jellyfin_url: "https://example.invalid".into(),
         }
     }
+}
+
+/// A missing scheme is a misconfiguration, not a choice: `10.0.20.10:9000`
+/// would otherwise reach reqwest in a shape nobody meant to send. Only the
+/// two endpoints this process actually connects to are checked --
+/// jellyfin_url never leaves a message to a person.
+fn reject_missing_scheme(field: &str, value: &str) -> Result<()> {
+    if !value.starts_with("http://") && !value.starts_with("https://") {
+        bail!("{field} must start with http:// or https://, got {value:?}");
+    }
+    Ok(())
+}
+
+/// The authentik_url/seerr_url fields that are `http://` rather than
+/// `https://`, for `load()`'s startup warning. A pure function so the
+/// decision of what counts as unencrypted is tested directly, without
+/// capturing `tracing` output.
+fn plain_http_fields(cfg: &Config) -> Vec<(&'static str, &str)> {
+    [
+        ("authentik_url", cfg.authentik_url.as_str()),
+        ("seerr_url", cfg.seerr_url.as_str()),
+    ]
+    .into_iter()
+    .filter(|(_, v)| v.starts_with("http://"))
+    .collect()
 }
 
 #[derive(Debug)]
@@ -88,6 +129,71 @@ mod tests {
         let cfg = Config::load(&p).expect("example config must parse");
         assert_eq!(cfg.poll_seconds, 30);
         assert_eq!(cfg.media_group, "Medien");
+    }
+
+    #[test]
+    fn a_url_missing_a_scheme_is_rejected_at_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = with_field_value(
+            include_str!("../config.example.toml"),
+            "seerr_url",
+            "10.0.50.10:5055",
+        );
+        let p = write(&dir, "c.toml", &body);
+        let err = Config::load(&p).unwrap_err().to_string();
+        assert!(err.contains("seerr_url"), "got: {err}");
+    }
+
+    #[test]
+    fn an_http_url_is_accepted_not_rejected() {
+        // Plain HTTP is this deployment's deliberate choice (see the design
+        // doc's zone note), not a mistake -- the guard above is only against
+        // a missing scheme, never against http:// itself.
+        let dir = tempfile::tempdir().unwrap();
+        let p = write(&dir, "c.toml", include_str!("../config.example.toml"));
+        let cfg = Config::load(&p).expect("http:// must still load");
+        assert!(cfg.seerr_url.starts_with("http://"));
+    }
+
+    #[test]
+    fn plain_http_fields_names_every_unencrypted_endpoint() {
+        let cfg = Config {
+            authentik_url: "http://10.0.20.10:9000".into(),
+            seerr_url: "https://10.0.50.10:5055".into(),
+            ..Config::for_test()
+        };
+        let flagged: Vec<_> = plain_http_fields(&cfg)
+            .into_iter()
+            .map(|(f, _)| f)
+            .collect();
+        assert_eq!(flagged, vec!["authentik_url"]);
+    }
+
+    #[test]
+    fn plain_http_fields_is_empty_when_both_are_encrypted() {
+        let cfg = Config {
+            authentik_url: "https://a.example.invalid".into(),
+            seerr_url: "https://b.example.invalid".into(),
+            ..Config::for_test()
+        };
+        assert!(plain_http_fields(&cfg).is_empty());
+    }
+
+    /// Replaces the value of a `field = "..."` line, whitespace around `=`
+    /// notwithstanding, without disturbing the rest of the file -- brittle
+    /// exact-string matching would break on the next reformat of the
+    /// example config.
+    fn with_field_value(base: &str, field: &str, value: &str) -> String {
+        base.lines()
+            .map(|l| {
+                if l.split('=').next().map(str::trim) == Some(field) {
+                    format!("{field} = \"{value}\"")
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
