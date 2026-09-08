@@ -4,3 +4,4 @@ pub mod model;
 pub mod secret;
 pub mod seerr;
 pub mod signal;
+pub mod state;
