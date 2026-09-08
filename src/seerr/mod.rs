@@ -277,3 +277,110 @@ impl Requests for SeerrClient {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod arc_requests_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// Answers every method with a fixed, recognisable value -- there is no
+    /// HTTP call for the blanket impl to make, only forwarding for it to get
+    /// right or wrong.
+    struct MockRequests;
+
+    #[async_trait]
+    impl Requests for MockRequests {
+        async fn search(
+            &self,
+            _query: &str,
+            _kind: Option<MediaKind>,
+            _page: u32,
+        ) -> Result<Vec<Hit>> {
+            Ok(vec![Hit {
+                tmdb_id: 42,
+                kind: MediaKind::Movie,
+                title: "canned title".into(),
+                year: Some(2020),
+                rating: Some(7.5),
+                seasons: 0,
+                already: false,
+            }])
+        }
+        async fn user_id(&self, _authentik_username: &str) -> Result<Option<SeerrUserId>> {
+            Ok(Some(SeerrUserId(7)))
+        }
+        async fn request(
+            &self,
+            _hit: &Hit,
+            _seasons: Seasons,
+            _as_user: SeerrUserId,
+        ) -> Result<i64> {
+            Ok(1849)
+        }
+        async fn pending(&self, _as_user: SeerrUserId) -> Result<Vec<Pending>> {
+            Ok(vec![Pending {
+                id: 1,
+                title: "canned pending".into(),
+                state: PendingState::Waiting,
+            }])
+        }
+        async fn withdraw(&self, _id: i64, _as_user: SeerrUserId) -> Result<()> {
+            Ok(())
+        }
+        async fn requester_of(&self, _request_id: i64) -> Result<Option<String>> {
+            Ok(Some("canned-requester".to_string()))
+        }
+    }
+
+    /// The failure mode this guards against: an `Arc<T>` impl that calls
+    /// `self.search(...)` instead of `(**self).search(...)` recurses onto
+    /// its own blanket impl forever -- a stack overflow on the very first
+    /// request, and nothing in a wiring task would ever exercise it, since
+    /// `main.rs` only ever moves the `Arc` around and never calls through
+    /// it directly. `search` is checked in full; the other five follow the
+    /// exact same one-line forwarding shape.
+    #[tokio::test]
+    async fn an_arc_forwards_search_to_the_wrapped_client_not_to_itself() {
+        let client: Arc<dyn Requests> = Arc::new(MockRequests);
+        let hits = client.search("anything", None, 1).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "canned title");
+    }
+
+    #[tokio::test]
+    async fn an_arc_forwards_every_other_method_too() {
+        let client: Arc<dyn Requests> = Arc::new(MockRequests);
+
+        assert_eq!(
+            client.user_id("robert").await.unwrap(),
+            Some(SeerrUserId(7))
+        );
+        assert_eq!(
+            client
+                .request(
+                    &Hit {
+                        tmdb_id: 1,
+                        kind: MediaKind::Movie,
+                        title: "x".into(),
+                        year: None,
+                        rating: None,
+                        seasons: 0,
+                        already: false,
+                    },
+                    Seasons::NotApplicable,
+                    SeerrUserId(7),
+                )
+                .await
+                .unwrap(),
+            1849
+        );
+        let pending = client.pending(SeerrUserId(7)).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].title, "canned pending");
+        assert!(client.withdraw(1, SeerrUserId(7)).await.is_ok());
+        assert_eq!(
+            client.requester_of(1).await.unwrap(),
+            Some("canned-requester".to_string())
+        );
+    }
+}

@@ -19,7 +19,7 @@ use std::sync::{Arc, RwLock};
 /// Uses `tokio::time::Instant` rather than `std::time::Instant` throughout,
 /// so both the deadline check and the poll sleep answer to the same clock --
 /// under `tokio::time::pause`, that clock is the one a test controls.
-async fn wait_for_socket(path: &std::path::Path, limit: std::time::Duration) -> anyhow::Result<()> {
+async fn wait_for_socket(path: &std::path::Path, limit: std::time::Duration) -> Result<()> {
     let deadline = tokio::time::Instant::now() + limit;
     while !path.exists() {
         if tokio::time::Instant::now() >= deadline {
@@ -90,8 +90,13 @@ async fn main() -> Result<()> {
     let seerr = Arc::new(SeerrClient::new(&config.seerr_url, secrets.seerr_key));
     let authentik = AuthentikClient::new(&config.authentik_url, secrets.authentik_token);
 
-    // 1. The reconciler.
-    {
+    // 1. The reconciler. Explicitly typed `JoinHandle<()>`: the loop below
+    // never breaks, so left to infer its own type it would be the never
+    // type `!` -- which happens to fall back to `()` today, but pinning it
+    // down here means that stays true regardless, and documents that this
+    // task is meant to run forever, ending only via panic or the process
+    // exiting.
+    let reconciler_task: tokio::task::JoinHandle<()> = {
         let state = state.clone();
         let signal = signal.clone();
         let catalogue = catalogue.clone();
@@ -147,11 +152,11 @@ async fn main() -> Result<()> {
                 }
                 *state.write().expect("the mapping lock is never poisoned") = working;
             }
-        });
-    }
+        })
+    };
 
     // 2. The webhook listener.
-    {
+    let webhook_task = {
         let app = webhook::router(webhook::WebhookState {
             messenger: signal.clone(),
             seerr: seerr.clone(),
@@ -165,36 +170,55 @@ async fn main() -> Result<()> {
             if let Err(e) = axum::serve(listener, app).await {
                 tracing::error!(error = %e, "the webhook listener stopped");
             }
-        });
-    }
+        })
+    };
 
-    // 3. The dialog. `seerr` is moved in as `Arc<SeerrClient>` -- the same
-    // `Arc` already shared into the webhook above (there as `Arc<dyn
-    // Requests>`, via the ordinary unsized coercion). `Dialog` is generic
-    // over `R: Requests` and owns its `R`, so the blanket `impl<T: Requests
-    // + ?Sized> Requests for Arc<T>` in `seerr::mod` is what lets the same
-    // connection serve both without being duplicated or the dialog getting
-    // one of its own.
-    let mut dialog = Dialog::new(
-        seerr,
-        SharedDirectory {
-            state: state.clone(),
-            media_group: config.media_group.clone(),
-        },
-        Catalogue::load(),
-        config.settings_url.clone(),
-        config.operator_name.clone(),
-    );
-    tracing::info!("signal-seerr is up");
-    while let Some(message) = incoming.recv().await {
-        for reply in dialog.handle(&message.from, &message.text).await {
-            if let Err(e) = signal.send(&message.from, &reply).await {
-                tracing::warn!(error = %e, "cannot reply");
+    // 3. The dialog, in its own task too. `seerr` is moved in as
+    // `Arc<SeerrClient>` -- the same `Arc` already shared into the webhook
+    // above (there as `Arc<dyn Requests>`, via the ordinary unsized
+    // coercion). `Dialog` is generic over `R: Requests` and owns its `R`,
+    // so the blanket `impl<T: Requests + ?Sized> Requests for Arc<T>` in
+    // `seerr::mod` is what lets the same connection serve both without
+    // being duplicated or the dialog getting one of its own.
+    let dialog_task = {
+        let mut dialog = Dialog::new(
+            seerr,
+            SharedDirectory {
+                state: state.clone(),
+                media_group: config.media_group.clone(),
+            },
+            Catalogue::load(),
+            config.settings_url.clone(),
+            config.operator_name.clone(),
+        );
+        tokio::spawn(async move {
+            tracing::info!("signal-seerr is up");
+            while let Some(message) = incoming.recv().await {
+                for reply in dialog.handle(&message.from, &message.text).await {
+                    if let Err(e) = signal.send(&message.from, &reply).await {
+                        tracing::warn!(error = %e, "cannot reply");
+                    }
+                }
             }
-        }
-    }
+        })
+    };
 
-    Ok(())
+    // Whichever of the three ends first ends the process. A reconciler that
+    // stops reconciling, a webhook listener that stops listening, or a
+    // dialog loop that stops answering is not a degraded bot, it is a
+    // broken one -- and none of the three would otherwise show up anywhere:
+    // `tokio::spawn`'s `JoinHandle` was previously discarded, so a panic in
+    // any of them would have left the process running with the unit still
+    // `active`. Exiting non-zero is what lets systemd's `Restart =
+    // on-failure` and its bounded `StartLimitBurst` turn a transient
+    // failure into a restart and a persistent one into `failed`, where the
+    // guest check and the alarm mail can see it.
+    tokio::select! {
+        r = reconciler_task => tracing::error!(?r, "the reconciler stopped"),
+        r = webhook_task => tracing::error!(?r, "the webhook listener stopped"),
+        r = dialog_task => tracing::error!(?r, "the dialog loop stopped"),
+    }
+    std::process::exit(1);
 }
 
 #[cfg(test)]
