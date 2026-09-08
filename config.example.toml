@@ -21,4 +21,10 @@ poll_seconds = 30
 media_group = "Medien"
 
 # Used in the "it is there" message.
-jellyfin_url = "https://jellyfin.rusty-vault.de"
+jellyfin_url = "https://jellyfin.example.invalid"
+
+# Where a person goes to enter their Signal name, shown to an unknown sender.
+settings_url = "https://example.invalid/account"
+
+# Who to ask when a group is missing, shown to a known but ungrouped sender.
+operator_name = "the operator"

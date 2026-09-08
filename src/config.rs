@@ -18,6 +18,13 @@ pub struct Config {
     pub poll_seconds: u64,
     pub media_group: String,
     pub jellyfin_url: String,
+    /// Where a person goes to enter their Signal name -- substituted into
+    /// error.unknown_sender. Required, no default: an operator who never
+    /// thought about it would otherwise ship somebody else's URL.
+    pub settings_url: String,
+    /// Who to ask when a group is missing -- substituted into
+    /// error.not_allowed. Same reasoning as settings_url.
+    pub operator_name: String,
 }
 
 impl Config {
@@ -58,6 +65,8 @@ impl Config {
             poll_seconds: 30,
             media_group: "Medien".into(),
             jellyfin_url: "https://example.invalid".into(),
+            settings_url: "https://example.invalid/account".into(),
+            operator_name: "the operator".into(),
         }
     }
 }
@@ -194,6 +203,33 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Drops a `field = "..."` line entirely, for the "this field is
+    /// required" tests below.
+    fn without_field(base: &str, field: &str) -> String {
+        base.lines()
+            .filter(|l| l.split('=').next().map(str::trim) != Some(field))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_config_missing_settings_url_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = without_field(include_str!("../config.example.toml"), "settings_url");
+        let p = write(&dir, "c.toml", &body);
+        let err = format!("{:#}", Config::load(&p).unwrap_err());
+        assert!(err.contains("settings_url"), "got: {err}");
+    }
+
+    #[test]
+    fn a_config_missing_operator_name_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = without_field(include_str!("../config.example.toml"), "operator_name");
+        let p = write(&dir, "c.toml", &body);
+        let err = format!("{:#}", Config::load(&p).unwrap_err());
+        assert!(err.contains("operator_name"), "got: {err}");
     }
 
     #[test]
