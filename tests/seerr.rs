@@ -176,15 +176,15 @@ async fn seerr_user_is_found_by_its_jellyfin_username() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "pageInfo": { "pages": 1, "results": 2 },
             "results": [
-                { "id": 1, "jellyfinUsername": "achim", "displayName": "Achim" },
-                { "id": 12, "jellyfinUsername": "robert", "displayName": "Robert" }
+                { "id": 1, "jellyfinUsername": "alice", "displayName": "Alice" },
+                { "id": 12, "jellyfinUsername": "bob", "displayName": "Bob" }
             ]
         })))
         .mount(&server)
         .await;
 
     let c = client(&server);
-    assert_eq!(c.user_id("robert").await.unwrap(), Some(SeerrUserId(12)));
+    assert_eq!(c.user_id("bob").await.unwrap(), Some(SeerrUserId(12)));
     assert_eq!(c.user_id("nobody").await.unwrap(), None);
 }
 
@@ -265,13 +265,13 @@ async fn requester_of_reads_the_jellyfin_username() {
         .and(path("/api/v1/request/1849"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": 1849,
-            "requestedBy": { "jellyfinUsername": "achim", "displayName": "Achim Schneider" }
+            "requestedBy": { "jellyfinUsername": "alice", "displayName": "Alice Example" }
         })))
         .mount(&server)
         .await;
 
     let who = client(&server).requester_of(1849).await.unwrap();
-    assert_eq!(who, Some("achim".to_string()));
+    assert_eq!(who, Some("alice".to_string()));
 }
 
 #[tokio::test]
