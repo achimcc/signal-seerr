@@ -3,13 +3,11 @@ pub mod diff;
 use crate::i18n::{Catalogue, Locale};
 use crate::model::Aci;
 use crate::secret::Secret;
-use crate::signal::{Messenger, SignalClient};
+use crate::signal::Messenger;
 use crate::state::{Entry, State};
 use anyhow::{bail, Result};
-use diff::{plan, AuthentikUser, Change};
+use diff::{AuthentikUser, Change};
 use std::future::Future;
-use std::path::PathBuf;
-use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Member {
@@ -219,85 +217,12 @@ async fn greet(
     }
 }
 
-/// Wires the pure decision (`plan`) and its side effects (`apply`) to the two
-/// real endpoints: Authentik over HTTP, Signal over signal-cli's socket.
-///
-/// One call is one poll. The pieces it composes -- `AuthentikClient`'s
-/// parsing (`parse_users`), `plan`, and `apply` -- each have their own unit
-/// tests above that do not need a socket or an HTTP server; `run_once` itself
-/// is thin wiring, exercised end to end once the poll loop (a later task)
-/// calls it against the real daemons.
-pub struct Reconciler {
-    authentik: AuthentikClient,
-    signal: Arc<SignalClient>,
-    catalogue: Catalogue,
-    state: State,
-    state_path: PathBuf,
-    fallback_locale: String,
-}
-
-impl Reconciler {
-    pub fn new(
-        authentik: AuthentikClient,
-        signal: Arc<SignalClient>,
-        catalogue: Catalogue,
-        state: State,
-        state_path: PathBuf,
-        fallback_locale: String,
-    ) -> Reconciler {
-        Reconciler {
-            authentik,
-            signal,
-            catalogue,
-            state,
-            state_path,
-            fallback_locale,
-        }
-    }
-
-    /// One pass: read Authentik, decide what changed, resolve and greet,
-    /// persist. `apply` logs and carries on past a single resolve or send
-    /// failure rather than aborting the pass (see `greet`), so it currently
-    /// never fails partway through. State is still saved unconditionally
-    /// before the outcome is propagated, so if a future change to `apply`
-    /// ever does introduce a pass-ending error, whatever it already applied
-    /// is not lost along with it.
-    pub async fn run_once(&mut self) -> Result<()> {
-        let users = self.authentik.users(&self.fallback_locale).await?;
-        let changes = plan(&self.state, &users);
-
-        let signal_for_resolve = self.signal.clone();
-        let resolve = move |name: String| {
-            let signal = signal_for_resolve.clone();
-            async move { signal.resolve_username(&name).await }
-        };
-
-        let outcome = apply(
-            &mut self.state,
-            changes,
-            &users,
-            self.signal.as_ref(),
-            &self.catalogue,
-            resolve,
-        )
-        .await;
-
-        // `apply` mutates `self.state` change by change and can stop early
-        // (a send failure propagates via `?`, see `apply`'s Added/Rebound
-        // arm). Saving unconditionally here means a send failure costs
-        // only the greeting it belongs to, not the ones already applied
-        // earlier in this same pass.
-        self.state.save(&self.state_path)?;
-        outcome?;
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::diff::plan;
     use super::*;
     use crate::state::State;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
     struct Sent(Mutex<Vec<(String, String)>>);
@@ -568,14 +493,12 @@ mod tests {
         assert_eq!(parse_users(&body, "de")[0].locale, "en");
     }
 
-    // The tests below exercise the wiring `parse_users` itself does not
+    // The two tests below exercise the wiring `parse_users` itself does not
     // reach: the real HTTP call (bearer token, endpoint path, status
-    // handling) and the real signal-cli socket, end to end through
-    // `Reconciler::run_once`. Neither is asked for by name in the task
-    // brief -- the brief's own tests stop at the pure functions -- but both
-    // pieces exist only for this task ("wires it to Authentik and to
-    // Signal"), and unlike `plan`/`apply`, nothing else in the test suite
-    // ever calls them.
+    // handling). Neither is asked for by name in the task brief -- the
+    // brief's own tests stop at the pure functions -- but `AuthentikClient`
+    // exists only for this task ("wires it to Authentik"), and unlike
+    // `plan`/`apply`, nothing else in the test suite ever calls it.
 
     #[tokio::test]
     async fn authentik_client_sends_a_bearer_token_and_parses_the_answer() {
@@ -616,92 +539,5 @@ mod tests {
         let client = AuthentikClient::new(&server.uri(), Secret::from("secret-token".to_string()));
         let err = client.users("de").await.unwrap_err().to_string();
         assert!(err.contains("503"), "got: {err}");
-    }
-
-    #[tokio::test]
-    async fn run_once_greets_a_new_user_end_to_end() {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-        let authentik = wiremock::MockServer::start().await;
-        wiremock::Mock::given(wiremock::matchers::method("GET"))
-            .and(wiremock::matchers::path("/api/v3/core/users/"))
-            .respond_with(
-                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "results": [
-                        { "username": "robert", "attributes": { "signal_username": "robert.42" },
-                          "groups_obj": [ { "name": "Medien" } ] }
-                    ]
-                })),
-            )
-            .mount(&authentik)
-            .await;
-
-        let dir = tempfile::tempdir().unwrap();
-        let socket_path = dir.path().join("signal-cli.sock");
-        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
-
-        // A minimal stand-in for signal-cli: answers exactly the two calls
-        // one greeting round trip makes, getUserStatus then send.
-        let server_task = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let (read_half, mut write_half) = stream.into_split();
-            let mut lines = BufReader::new(read_half).lines();
-
-            let request = lines.next_line().await.unwrap().unwrap();
-            let id = serde_json::from_str::<serde_json::Value>(&request).unwrap()["id"]
-                .as_str()
-                .unwrap()
-                .to_string();
-            let answer = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": [ { "recipient": "u:robert.42", "number": null,
-                               "uuid": "aaaa-bbbb", "isRegistered": true } ]
-            });
-            write_half
-                .write_all(format!("{answer}\n").as_bytes())
-                .await
-                .unwrap();
-
-            let request = lines.next_line().await.unwrap().unwrap();
-            let id = serde_json::from_str::<serde_json::Value>(&request).unwrap()["id"]
-                .as_str()
-                .unwrap()
-                .to_string();
-            let answer = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "timestamp": 1 }
-            });
-            write_half
-                .write_all(format!("{answer}\n").as_bytes())
-                .await
-                .unwrap();
-        });
-
-        let (signal, _rx) = SignalClient::connect(&socket_path, "+490000")
-            .await
-            .unwrap();
-        let authentik_client =
-            AuthentikClient::new(&authentik.uri(), Secret::from("secret-token".to_string()));
-        let state_path = dir.path().join("state.json");
-
-        let mut reconciler = Reconciler::new(
-            authentik_client,
-            signal,
-            Catalogue::load(),
-            State::default(),
-            state_path.clone(),
-            "de".to_string(),
-        );
-
-        reconciler.run_once().await.unwrap();
-        server_task.await.unwrap();
-
-        let state = State::load(&state_path).unwrap();
-        let entry = state.by_user("robert").expect("robert was greeted");
-        assert!(entry.greeted);
-        assert_eq!(entry.aci, Aci("aaaa-bbbb".into()));
-        assert_eq!(entry.groups, vec!["Medien".to_string()]);
     }
 }
