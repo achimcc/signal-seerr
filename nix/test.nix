@@ -1,0 +1,58 @@
+{ pkgs, module, package }:
+pkgs.testers.runNixOSTest {
+  name = "signal-seerr";
+
+  nodes.machine = { ... }: {
+    imports = [ module ];
+    services.signal-seerr = {
+      enable = true;
+      inherit package;
+      settings = {
+        signal_socket = "/run/signal-seerr/fake.sock";
+        signal_account = "+490000";
+        authentik_url = "http://127.0.0.1:9";
+        authentik_token_file = "/run/secrets/tok";
+        seerr_url = "http://127.0.0.1:9";
+        seerr_key_file = "/run/secrets/key";
+        webhook_listen = "127.0.0.1:8080";
+        webhook_token_file = "/run/secrets/hook";
+        state_file = "/var/lib/signal-seerr/state.json";
+        poll_seconds = 30;
+        media_group = "Medien";
+        jellyfin_url = "https://example.invalid";
+        settings_url = "https://example.invalid/account";
+        operator_name = "the operator";
+      };
+    };
+    # A stand-in for signal-cli: the point of this test is the unit, the
+    # config file and the socket wait, not the Signal protocol.
+    systemd.services.signal-cli = {
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig.Type = "simple";
+      script = ''
+        mkdir -p /run/signal-seerr /run/secrets
+        printf t > /run/secrets/tok; printf k > /run/secrets/key; printf h > /run/secrets/hook
+        exec ${pkgs.socat}/bin/socat UNIX-LISTEN:/run/signal-seerr/fake.sock,fork -
+      '';
+    };
+  };
+
+  testScript = ''
+    machine.wait_for_unit("signal-seerr.service")
+    # Measured at the result, not at the exit code: the listener must answer.
+    machine.wait_for_open_port(8080)
+    machine.succeed(
+        "curl -sf -o /dev/null -w '%{http_code}' -X POST "
+        "-H 'X-Webhook-Token: h' -H 'content-type: application/json' "
+        "-d '{\"notification_type\":\"TEST_NOTIFICATION\"}' "
+        "http://127.0.0.1:8080/seerr | grep -q 200"
+    )
+    # A wrong token must be refused, and that is the assertion that can go red.
+    machine.succeed(
+        "test $(curl -s -o /dev/null -w '%{http_code}' -X POST "
+        "-H 'X-Webhook-Token: nope' -H 'content-type: application/json' "
+        "-d '{\"notification_type\":\"TEST_NOTIFICATION\"}' "
+        "http://127.0.0.1:8080/seerr) = 401"
+    )
+  '';
+}

@@ -58,6 +58,11 @@
           buildPhase = "cargo fmt --check";
           installPhase = "touch $out";
         });
+        vm = import ./nix/test.nix {
+          inherit pkgs;
+          module = self.nixosModules.default;
+          package = self.packages.${pkgs.system}.default;
+        };
       });
     };
 }
