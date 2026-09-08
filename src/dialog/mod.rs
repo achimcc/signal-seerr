@@ -11,6 +11,32 @@ const RESULTS_LIVE: Duration = Duration::from_secs(600);
 /// How long a stranger is left alone after being told once.
 const STRANGER_QUIET: Duration = Duration::from_secs(3600);
 
+/// Strips a known command prefix (matched case-insensitively against
+/// `lowered`) and returns the ORIGINAL-case remainder, trimmed.
+///
+/// The prefix's own byte length is used to slice `text` -- never a length
+/// derived from `lowered`. Lowercasing is not byte-length preserving ('ẞ' is
+/// 3 bytes and lowercases to the 2-byte 'ß'; 'İ' is 2 bytes and lowercases to
+/// the 3-byte 'i̇'), so a length taken from the lowercased copy can land a
+/// slice off a UTF-8 character boundary (panic) or make the byte count run
+/// backwards (subtraction overflow, also a panic) -- reachable from a single
+/// message containing such a character after the command word.
+fn strip_command<'a>(text: &'a str, lowered: &str, prefixes: &[&str]) -> Option<&'a str> {
+    prefixes
+        .iter()
+        .find(|p| lowered.starts_with(**p))
+        .map(|p| text[p.len()..].trim())
+}
+
+/// Drops every stranger entry older than `STRANGER_QUIET` as of `now`. A
+/// free function taking `now` explicitly (rather than calling
+/// `Instant::now()` itself) so a test can drive it with a synthetic,
+/// already-old `Instant` -- `Instant` supports `Duration` subtraction, so
+/// this needs neither a real sleep nor a paused clock.
+fn prune_stale_strangers(told: &mut HashMap<Aci, Instant>, now: Instant) {
+    told.retain(|_, at| now.duration_since(*at) < STRANGER_QUIET);
+}
+
 #[derive(Clone, Debug)]
 pub enum Conversation {
     Idle,
@@ -95,22 +121,14 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
             _ => {}
         }
 
-        if let Some(rest) = lowered
-            .strip_prefix("/film ")
-            .or(lowered.strip_prefix("/movie "))
-        {
-            let query = text[text.len() - rest.len()..].to_string();
+        if let Some(query) = strip_command(text, &lowered, &["/film ", "/movie "]) {
             return self
-                .search(from, locale, &query, Some(MediaKind::Movie), 1)
+                .search(from, locale, query, Some(MediaKind::Movie), 1)
                 .await;
         }
-        if let Some(rest) = lowered
-            .strip_prefix("/serie ")
-            .or(lowered.strip_prefix("/series "))
-        {
-            let query = text[text.len() - rest.len()..].to_string();
+        if let Some(query) = strip_command(text, &lowered, &["/serie ", "/series "]) {
             return self
-                .search(from, locale, &query, Some(MediaKind::Tv), 1)
+                .search(from, locale, query, Some(MediaKind::Tv), 1)
                 .await;
         }
 
@@ -119,6 +137,11 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
 
     fn tell_stranger_once(&mut self, from: &Aci) -> Vec<String> {
         let now = Instant::now();
+        // `conversations` is bounded by the size of the household; this map
+        // is not -- every wrong number that ever writes leaves an entry that
+        // is refreshed but never otherwise removed. Prune opportunistically
+        // rather than running a timer for it.
+        prune_stale_strangers(&mut self.told_strangers, now);
         if let Some(when) = self.told_strangers.get(from) {
             if now.duration_since(*when) < STRANGER_QUIET {
                 return vec![];
@@ -222,5 +245,47 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         out.push('\n');
         out.push_str(&self.catalogue.text(locale, "search.footer", &[]));
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_command_uses_the_prefixs_own_length_not_the_lowered_remainders() {
+        // Regression for the crash this function replaces: slicing by
+        // `text.len() - lowered_remainder.len()` breaks when lowercasing
+        // changes byte length. `strip_command` must not reproduce that.
+        assert_eq!(
+            strip_command("/film ẞ", "/film ß", &["/film "]),
+            Some("ẞ"),
+            "the original character, not the lowercased one"
+        );
+        assert_eq!(
+            strip_command("/FILM Blade Runner", "/film blade runner", &["/film "]),
+            Some("Blade Runner")
+        );
+        assert_eq!(
+            strip_command("blade runner", "blade runner", &["/film "]),
+            None
+        );
+    }
+
+    #[test]
+    fn stale_stranger_entries_are_pruned_and_fresh_ones_survive() {
+        let now = Instant::now();
+        let mut told = HashMap::new();
+        told.insert(
+            Aci("old".into()),
+            now - STRANGER_QUIET - Duration::from_secs(1),
+        );
+        told.insert(Aci("fresh".into()), now);
+
+        prune_stale_strangers(&mut told, now);
+
+        assert_eq!(told.len(), 1, "the stale entry must be gone");
+        assert!(told.contains_key(&Aci("fresh".into())));
+        assert!(!told.contains_key(&Aci("old".into())));
     }
 }

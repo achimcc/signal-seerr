@@ -20,16 +20,20 @@ pub struct FakeSeerr {
     pub hits: Vec<Hit>,
     pub placed: Mutex<Vec<(i64, Seasons, SeerrUserId)>>,
     pub fail: bool,
+    /// Every query string `Dialog` actually handed to `search`, in order --
+    /// so a test can check what reached Seerr, not just what came back.
+    pub queries: Mutex<Vec<String>>,
 }
 
 #[async_trait::async_trait]
 impl Requests for FakeSeerr {
     async fn search(
         &self,
-        _q: &str,
+        q: &str,
         kind: Option<MediaKind>,
         page: u32,
     ) -> anyhow::Result<Vec<Hit>> {
+        self.queries.lock().unwrap().push(q.to_string());
         if self.fail {
             anyhow::bail!("seerr is down");
         }
@@ -273,4 +277,83 @@ async fn film_and_serie_narrow_the_search() {
         !only_series[0].contains("Andor the Movie"),
         "the film leaked in"
     );
+}
+
+#[tokio::test]
+async fn a_film_command_reaches_seerr_with_the_original_case_preserved() {
+    let mut d = dialog(FakeSeerr::default(), true);
+    d.handle(&Aci("aaaa".into()), "/film Blade Runner 2049")
+        .await;
+    assert_eq!(
+        d.seerr_ref().queries.lock().unwrap().as_slice(),
+        ["Blade Runner 2049"],
+        "the prefix must be stripped, not the whole query lowercased"
+    );
+}
+
+#[tokio::test]
+async fn a_bare_title_reaches_seerr_unchanged() {
+    let mut d = dialog(FakeSeerr::default(), true);
+    d.handle(&Aci("aaaa".into()), "Blade Runner").await;
+    assert_eq!(
+        d.seerr_ref().queries.lock().unwrap().as_slice(),
+        ["Blade Runner"]
+    );
+}
+
+#[tokio::test]
+async fn a_query_that_changes_byte_length_when_lowercased_does_not_panic() {
+    // 'ẞ' (U+1E9E, capital sharp S) is 3 bytes in UTF-8 and lowercases to 'ß'
+    // (U+00DF), which is 2. Slicing the original message by a length derived
+    // from the *lowercased* copy -- `text[text.len() - rest.len()..]` -- can
+    // therefore land off a UTF-8 character boundary and panic, or (for a
+    // character whose lowercasing grows, such as 'İ') underflow the
+    // subtraction and panic that way instead. Either way this must not crash
+    // message handling from a single crafted message.
+    let mut d = dialog(FakeSeerr::default(), true);
+    let out = d.handle(&Aci("aaaa".into()), "/film ẞ").await;
+    assert_eq!(
+        d.seerr_ref().queries.lock().unwrap().as_slice(),
+        ["ẞ"],
+        "the original character must reach Seerr unchanged, not the lowercased one"
+    );
+    assert!(!out.is_empty(), "must still answer");
+}
+
+#[tokio::test]
+async fn m_with_no_open_list_says_it_does_not_understand() {
+    let mut d = dialog(FakeSeerr::default(), true);
+    let out = d.handle(&Aci("aaaa".into()), "m").await;
+    let expected = Catalogue::load().text(Locale::De, "error.not_understood", &[]);
+    assert_eq!(out[0], expected);
+}
+
+#[tokio::test]
+async fn seerr_ref_returns_the_backend_handed_to_new() {
+    let seerr = FakeSeerr {
+        fail: true,
+        ..Default::default()
+    };
+    let d = dialog(seerr, true);
+    assert!(
+        d.seerr_ref().fail,
+        "seerr_ref must expose the same backend new() was given, not a copy or a default"
+    );
+}
+
+#[tokio::test]
+async fn each_stranger_is_told_once_independently() {
+    let mut d = dialog(FakeSeerr::default(), false);
+    let a = Aci("stranger-a".into());
+    let b = Aci("stranger-b".into());
+
+    let first_a = d.handle(&a, "hi").await;
+    let first_b = d.handle(&b, "hi").await;
+    assert_eq!(first_a.len(), 1, "a must be told");
+    assert_eq!(first_b.len(), 1, "a different stranger must be told too");
+
+    let second_a = d.handle(&a, "hi again").await;
+    let second_b = d.handle(&b, "hi again").await;
+    assert!(second_a.is_empty(), "a was just told");
+    assert!(second_b.is_empty(), "b was just told");
 }
