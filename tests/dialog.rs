@@ -480,3 +480,133 @@ async fn a_season_number_that_does_not_exist_is_refused() {
     assert!(out[0].contains("Staffeln"), "asked again, got: {}", out[0]);
     assert!(placed(&d).is_empty(), "placed a season that does not exist");
 }
+
+#[tokio::test]
+async fn status_lists_what_is_still_on_its_way() {
+    struct WithPending;
+    #[async_trait::async_trait]
+    impl Requests for WithPending {
+        async fn search(
+            &self,
+            _q: &str,
+            _k: Option<MediaKind>,
+            _p: u32,
+        ) -> anyhow::Result<Vec<Hit>> {
+            Ok(vec![])
+        }
+        async fn user_id(&self, _u: &str) -> anyhow::Result<Option<SeerrUserId>> {
+            Ok(Some(SeerrUserId(12)))
+        }
+        async fn request(&self, _h: &Hit, _s: Seasons, _u: SeerrUserId) -> anyhow::Result<i64> {
+            Ok(1)
+        }
+        async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Pending>> {
+            Ok(vec![Pending {
+                id: 1849,
+                title: "Blade Runner 2049".into(),
+                state: PendingState::Fetching,
+            }])
+        }
+        async fn withdraw(&self, _i: i64, _u: SeerrUserId) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn requester_of(&self, _request_id: i64) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
+    }
+    let aci = Aci("aaaa".into());
+    let dir = FakeDirectory(vec![(aci.clone(), member())]);
+    let mut d = Dialog::new(
+        WithPending,
+        dir,
+        Catalogue::load(),
+        settings_url(),
+        operator_name(),
+    );
+
+    let out = d.handle(&aci, "/status").await;
+    assert!(out[0].contains("1849"), "got: {}", out[0]);
+    assert!(out[0].contains("Blade Runner 2049"), "got: {}", out[0]);
+}
+
+#[tokio::test]
+async fn status_says_so_when_there_is_nothing() {
+    let mut d = dialog(FakeSeerr::default(), true);
+    let out = d.handle(&Aci("aaaa".into()), "/status").await;
+    assert!(out[0].contains("nichts unterwegs"), "got: {}", out[0]);
+}
+
+#[tokio::test]
+async fn weg_withdraws_and_confirms() {
+    let mut d = dialog(FakeSeerr::default(), true);
+    let out = d.handle(&Aci("aaaa".into()), "/weg 1849").await;
+    assert!(out[0].contains("zurückgenommen"), "got: {}", out[0]);
+}
+
+#[tokio::test]
+async fn weg_without_a_number_does_not_reach_seerr() {
+    let mut d = dialog(FakeSeerr::default(), true);
+    let out = d.handle(&Aci("aaaa".into()), "/weg").await;
+    assert!(out[0].contains("nichts anfangen"), "got: {}", out[0]);
+}
+
+#[tokio::test]
+async fn weg_on_somebody_elses_request_reports_it_as_not_yours() {
+    struct Refuses;
+    #[async_trait::async_trait]
+    impl Requests for Refuses {
+        async fn search(
+            &self,
+            _q: &str,
+            _k: Option<MediaKind>,
+            _p: u32,
+        ) -> anyhow::Result<Vec<Hit>> {
+            Ok(vec![])
+        }
+        async fn user_id(&self, _u: &str) -> anyhow::Result<Option<SeerrUserId>> {
+            Ok(Some(SeerrUserId(12)))
+        }
+        async fn request(&self, _h: &Hit, _s: Seasons, _u: SeerrUserId) -> anyhow::Result<i64> {
+            Ok(1)
+        }
+        async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Pending>> {
+            Ok(vec![])
+        }
+        async fn withdraw(&self, id: i64, _u: SeerrUserId) -> anyhow::Result<()> {
+            anyhow::bail!("request {id} is not yours")
+        }
+        async fn requester_of(&self, _request_id: i64) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
+    }
+    let aci = Aci("aaaa".into());
+    let dir = FakeDirectory(vec![(aci.clone(), member())]);
+    let mut d = Dialog::new(
+        Refuses,
+        dir,
+        Catalogue::load(),
+        settings_url(),
+        operator_name(),
+    );
+    let out = d.handle(&aci, "/weg 1849").await;
+    assert!(
+        out[0].contains("1849"),
+        "the number must be named back: {}",
+        out[0]
+    );
+    assert!(
+        !out[0].contains("zurückgenommen"),
+        "claimed success: {}",
+        out[0]
+    );
+}
+
+#[tokio::test]
+async fn help_is_the_same_text_as_the_greeting() {
+    // One source. A second wording drifts, and the greeting is the one nobody
+    // re-reads.
+    let mut d = dialog(FakeSeerr::default(), true);
+    let out = d.handle(&Aci("aaaa".into()), "/help").await;
+    let catalogue = Catalogue::load();
+    assert_eq!(out[0], catalogue.text(Locale::De, "help.body", &[]));
+}

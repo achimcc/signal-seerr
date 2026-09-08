@@ -36,6 +36,9 @@ unknown_id = "I don't have a request from you with the number {id}."
 [status]
 empty = "There's nothing of yours on the way right now."
 line = "{id}: {title} — {state}"
+waiting = "waiting"
+fetching = "fetching"
+available = "available"
 
 [available]
 ready = "\"{title}\" is here.\n{url}"

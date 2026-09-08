@@ -36,6 +36,9 @@ unknown_id = "Einen Wunsch mit der Nummer {id} habe ich von dir nicht."
 [status]
 empty = "Von dir ist gerade nichts unterwegs."
 line = "{id}: {title} — {state}"
+waiting = "wartet"
+fetching = "wird geholt"
+available = "ist da"
 
 [available]
 ready = "„{title}\" ist da.\n{url}"

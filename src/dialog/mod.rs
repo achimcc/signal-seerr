@@ -1,6 +1,6 @@
 use crate::directory::Directory;
 use crate::i18n::{Catalogue, Locale};
-use crate::model::{Aci, Hit, MediaKind, Seasons};
+use crate::model::{Aci, Hit, MediaKind, PendingState, Seasons};
 use crate::seerr::Requests;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -118,6 +118,7 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
                 return vec![];
             }
             "m" | "mehr" | "more" => return self.next_page(from, locale).await,
+            "/status" => return self.status(from, locale).await,
             _ => {}
         }
 
@@ -150,6 +151,14 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
                 // Stale list: fall through, so "2" searches for "2" again.
                 self.conversations.remove(from);
             }
+        }
+
+        if lowered == "/weg"
+            || lowered == "/withdraw"
+            || lowered.starts_with("/weg ")
+            || lowered.starts_with("/withdraw ")
+        {
+            return self.withdraw(from, locale, text).await;
         }
 
         self.search(from, locale, text, None, 1).await
@@ -257,6 +266,74 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
             Err(e) => {
                 tracing::warn!(error = %e, "cannot place the request");
                 vec![self.catalogue.text(locale, "error.seerr_down", &[])]
+            }
+        }
+    }
+
+    async fn status(&mut self, from: &Aci, locale: Locale) -> Vec<String> {
+        let Some(member) = self.directory.lookup(from) else {
+            return vec![];
+        };
+        let Ok(Some(user)) = self.seerr.user_id(&member.authentik_username).await else {
+            return vec![self.catalogue.text(locale, "error.seerr_down", &[])];
+        };
+        match self.seerr.pending(user).await {
+            Ok(list) if list.is_empty() => {
+                vec![self.catalogue.text(locale, "status.empty", &[])]
+            }
+            Ok(list) => vec![list
+                .iter()
+                .map(|p| {
+                    let state_key = match p.state {
+                        PendingState::Waiting => "status.waiting",
+                        PendingState::Fetching => "status.fetching",
+                        PendingState::Available => "status.available",
+                    };
+                    let state = self.catalogue.text(locale, state_key, &[]);
+                    self.catalogue.text(
+                        locale,
+                        "status.line",
+                        &[
+                            ("id", &p.id.to_string()),
+                            ("title", &p.title),
+                            ("state", &state),
+                        ],
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")],
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot list requests");
+                vec![self.catalogue.text(locale, "error.seerr_down", &[])]
+            }
+        }
+    }
+
+    async fn withdraw(&mut self, from: &Aci, locale: Locale, text: &str) -> Vec<String> {
+        let Some(id) = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|t| t.parse::<i64>().ok())
+        else {
+            return vec![self.catalogue.text(locale, "error.not_understood", &[])];
+        };
+        let Some(member) = self.directory.lookup(from) else {
+            return vec![];
+        };
+        let Ok(Some(user)) = self.seerr.user_id(&member.authentik_username).await else {
+            return vec![self.catalogue.text(locale, "error.seerr_down", &[])];
+        };
+        match self.seerr.withdraw(id, user).await {
+            Ok(()) => {
+                vec![self
+                    .catalogue
+                    .text(locale, "request.withdrawn", &[("id", &id.to_string())])]
+            }
+            Err(e) => {
+                tracing::info!(error = %e, id, "cannot withdraw");
+                vec![self
+                    .catalogue
+                    .text(locale, "request.unknown_id", &[("id", &id.to_string())])]
             }
         }
     }
