@@ -23,6 +23,14 @@ pub struct FakeSeerr {
     /// Every query string `Dialog` actually handed to `search`, in order --
     /// so a test can check what reached Seerr, not just what came back.
     pub queries: Mutex<Vec<String>>,
+    /// What `quality_profiles` answers. Empty by default, so every test
+    /// written before the profile question behaves as it always did.
+    pub profiles: Vec<QualityProfile>,
+    /// The `profileId` that reached `request` -- the point of the whole
+    /// question, and the thing a test has to be able to look at.
+    pub asked_profile: Mutex<Option<i64>>,
+    /// What `profile_of` reads back afterwards.
+    pub readback: Option<i64>,
 }
 
 #[async_trait::async_trait]
@@ -52,12 +60,20 @@ impl Requests for FakeSeerr {
     async fn user_id(&self, _u: &str) -> anyhow::Result<Option<SeerrUserId>> {
         Ok(Some(SeerrUserId(12)))
     }
+    async fn quality_profiles(&self, _kind: MediaKind) -> anyhow::Result<Vec<QualityProfile>> {
+        Ok(self.profiles.clone())
+    }
+    async fn profile_of(&self, _request_id: i64) -> anyhow::Result<Option<i64>> {
+        Ok(self.readback)
+    }
     async fn request(
         &self,
         hit: &Hit,
         seasons: Seasons,
         as_user: SeerrUserId,
+        profile_id: Option<i64>,
     ) -> anyhow::Result<i64> {
+        *self.asked_profile.lock().unwrap() = profile_id;
         self.placed
             .lock()
             .unwrap()
@@ -497,7 +513,19 @@ async fn status_lists_what_is_still_on_its_way() {
         async fn user_id(&self, _u: &str) -> anyhow::Result<Option<SeerrUserId>> {
             Ok(Some(SeerrUserId(12)))
         }
-        async fn request(&self, _h: &Hit, _s: Seasons, _u: SeerrUserId) -> anyhow::Result<i64> {
+        async fn quality_profiles(&self, _kind: MediaKind) -> anyhow::Result<Vec<QualityProfile>> {
+            Ok(vec![])
+        }
+        async fn profile_of(&self, _request_id: i64) -> anyhow::Result<Option<i64>> {
+            Ok(None)
+        }
+        async fn request(
+            &self,
+            _h: &Hit,
+            _s: Seasons,
+            _u: SeerrUserId,
+            _p: Option<i64>,
+        ) -> anyhow::Result<i64> {
             Ok(1)
         }
         async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Pending>> {
@@ -566,7 +594,19 @@ async fn weg_on_somebody_elses_request_reports_it_as_not_yours() {
         async fn user_id(&self, _u: &str) -> anyhow::Result<Option<SeerrUserId>> {
             Ok(Some(SeerrUserId(12)))
         }
-        async fn request(&self, _h: &Hit, _s: Seasons, _u: SeerrUserId) -> anyhow::Result<i64> {
+        async fn quality_profiles(&self, _kind: MediaKind) -> anyhow::Result<Vec<QualityProfile>> {
+            Ok(vec![])
+        }
+        async fn profile_of(&self, _request_id: i64) -> anyhow::Result<Option<i64>> {
+            Ok(None)
+        }
+        async fn request(
+            &self,
+            _h: &Hit,
+            _s: Seasons,
+            _u: SeerrUserId,
+            _p: Option<i64>,
+        ) -> anyhow::Result<i64> {
             Ok(1)
         }
         async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Pending>> {

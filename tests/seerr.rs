@@ -134,7 +134,7 @@ async fn a_request_is_placed_in_the_name_of_the_asker() {
         already: false,
     };
     let id = client(&server)
-        .request(&hit, Seasons::NotApplicable, SeerrUserId(12))
+        .request(&hit, Seasons::NotApplicable, SeerrUserId(12), None)
         .await
         .unwrap();
     assert_eq!(id, 1849);
@@ -162,7 +162,7 @@ async fn a_series_request_carries_its_seasons() {
         already: false,
     };
     let id = client(&server)
-        .request(&hit, Seasons::Only(vec![1, 2]), SeerrUserId(12))
+        .request(&hit, Seasons::Only(vec![1, 2]), SeerrUserId(12), None)
         .await
         .unwrap();
     assert_eq!(id, 7);
@@ -325,4 +325,152 @@ async fn a_space_in_the_query_is_percent_encoded_not_a_plus() {
         .search("blade runner", None, 1)
         .await
         .expect("a space must travel as %20 -- Seerr answers 400 to a +");
+}
+
+/// The list comes from the DEFAULT server, and the default is the one
+/// flagged as such -- not the first in the array, and not id 0. Measured on
+/// 2026-09-09: `GET /api/v1/service/radarr` answers with `isDefault` per
+/// entry and, notably, carries no `apiKey` (the leaking route would be
+/// `/settings/radarr`, which needs ADMIN).
+#[tokio::test]
+async fn quality_profiles_come_from_the_server_flagged_default() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/service/radarr"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "id": 3, "name": "Ein anderer", "isDefault": false },
+            { "id": 7, "name": "Radarr", "isDefault": true }
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/service/radarr/7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "server": { "id": 7 },
+            "profiles": [
+                { "id": 11, "name": "Rarität, Originalsprache (auch SD)" },
+                { "id": 7, "name": "Dual Language, sonst Deutsch (1080p)" }
+            ],
+            "rootFolders": [],
+            "tags": []
+        })))
+        .mount(&server)
+        .await;
+
+    let profiles = client(&server)
+        .quality_profiles(MediaKind::Movie)
+        .await
+        .unwrap();
+
+    assert_eq!(profiles.len(), 2);
+    assert_eq!(profiles[0].id, 11);
+    assert_eq!(profiles[0].name, "Rarität, Originalsprache (auch SD)");
+    assert_eq!(profiles[1].id, 7);
+}
+
+/// Radarr and Sonarr keep SEPARATE id spaces, and today the numbers happen
+/// to coincide (7..11 on both, measured 2026-09-09) -- which is exactly what
+/// makes a number-based mapping look correct right up to the day a profile
+/// is added or removed on one side. The mapping is by NAME; this test gives
+/// the two services deliberately different numbers for the same name, so a
+/// client that ever asked the wrong service would say so.
+#[tokio::test]
+async fn a_series_asks_sonarr_not_radarr_for_its_profile_ids() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/service/sonarr"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "id": 0, "name": "Sonarr", "isDefault": true }
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/service/sonarr/0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "server": { "id": 0 },
+            "profiles": [ { "id": 42, "name": "Dual Language, sonst Deutsch (1080p)" } ],
+            "rootFolders": [],
+            "tags": []
+        })))
+        .mount(&server)
+        .await;
+    // Radarr answers with the SAME name under a different number. If the
+    // client asked here for a series, the assertion below would catch it.
+    Mock::given(method("GET"))
+        .and(path("/api/v1/service/radarr"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "id": 0, "name": "Radarr", "isDefault": true }
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/service/radarr/0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "server": { "id": 0 },
+            "profiles": [ { "id": 7, "name": "Dual Language, sonst Deutsch (1080p)" } ],
+            "rootFolders": [],
+            "tags": []
+        })))
+        .mount(&server)
+        .await;
+
+    let profiles = client(&server)
+        .quality_profiles(MediaKind::Tv)
+        .await
+        .unwrap();
+
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(
+        profiles[0].id, 42,
+        "a series must carry Sonarr's number for that name, not Radarr's"
+    );
+}
+
+/// A `profileId` reaches Seerr's request body under exactly that key --
+/// `routes/request.js:248` -> `entity/MediaRequest.js:71`. And when nobody
+/// chose one, the key must be ABSENT rather than null: Seerr then applies
+/// the server's own default, which is what a request placed before v0.2 did.
+#[tokio::test]
+async fn a_chosen_profile_travels_as_profile_id_and_none_omits_the_key() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/request"))
+        .and(wiremock::matchers::body_partial_json(
+            serde_json::json!({ "profileId": 11 }),
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({ "id": 55 })))
+        .mount(&server)
+        .await;
+
+    let hit = Hit {
+        tmdb_id: 335984,
+        kind: MediaKind::Movie,
+        title: "Blade Runner 2049".into(),
+        year: Some(2017),
+        rating: Some(8.0),
+        seasons: 0,
+        already: false,
+    };
+    let id = client(&server)
+        .request(&hit, Seasons::NotApplicable, SeerrUserId(3), Some(11))
+        .await
+        .unwrap();
+    assert_eq!(id, 55);
+
+    let without = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/request"))
+        .and(|request: &wiremock::Request| {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            body.get("profileId").is_none()
+        })
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({ "id": 56 })))
+        .mount(&without)
+        .await;
+
+    let id = client(&without)
+        .request(&hit, Seasons::NotApplicable, SeerrUserId(3), None)
+        .await
+        .expect("no choice means no key at all, not a null");
+    assert_eq!(id, 56);
 }

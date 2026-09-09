@@ -310,7 +310,7 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         };
 
         self.conversations.remove(from);
-        match self.seerr.request(hit, seasons, user).await {
+        match self.seerr.request(hit, seasons, user, None).await {
             Ok(id) => vec![self.catalogue.text(
                 locale,
                 "request.placed",
@@ -574,17 +574,27 @@ mod tests {
         async fn user_id(&self, _u: &str) -> anyhow::Result<Option<SeerrUserId>> {
             Ok(Some(SeerrUserId(12)))
         }
+        async fn quality_profiles(
+            &self,
+            _kind: MediaKind,
+        ) -> anyhow::Result<Vec<crate::model::QualityProfile>> {
+            Ok(vec![])
+        }
         async fn request(
             &self,
             hit: &Hit,
             seasons: Seasons,
             as_user: SeerrUserId,
+            _profile_id: Option<i64>,
         ) -> anyhow::Result<i64> {
             self.placed
                 .lock()
                 .unwrap()
                 .push((hit.tmdb_id, seasons, as_user));
             Ok(1849)
+        }
+        async fn profile_of(&self, _request_id: i64) -> anyhow::Result<Option<i64>> {
+            Ok(None)
         }
         async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Pending>> {
             Ok(vec![])

@@ -28,8 +28,32 @@ pub struct RequestPart {
     /// is not -- it maps to request.requestedBy.displayName, which the person
     /// can change in their own Seerr profile. Measured at the shipped
     /// package. The name comes from Seerr's API instead.
-    #[serde(rename = "request_id")]
+    ///
+    /// A STRING on the wire, not a number: the payload template writes
+    /// `"request_id":"{{request_id}}"`, quotes included, because a bare
+    /// `{{request_id}}` would leave `{"request_id":}` -- broken JSON --
+    /// behind whenever there is no request to substitute. So Seerr quotes it,
+    /// and this field has to accept that. It also accepts a number, because
+    /// nothing forces an operator to quote it in their own template.
+    #[serde(rename = "request_id", default, deserialize_with = "loose_id")]
     pub request_id: Option<i64>,
+}
+
+/// Reads an id that may arrive as a number, as a quoted number, as an empty
+/// string (Seerr's substitution for "there is no request") or as null.
+///
+/// Anything else is `None` rather than an error, on purpose: a payload this
+/// bot cannot make sense of must be accepted and dropped, never answered with
+/// a 4xx that makes Seerr retry it for ever.
+fn loose_id<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    })
 }
 
 #[derive(Clone)]
@@ -171,12 +195,22 @@ mod tests {
         async fn user_id(&self, _u: &str) -> anyhow::Result<Option<SeerrUserId>> {
             unreachable!("not used by the webhook handler")
         }
+        async fn quality_profiles(
+            &self,
+            _kind: MediaKind,
+        ) -> anyhow::Result<Vec<crate::model::QualityProfile>> {
+            unreachable!("not used by the webhook handler")
+        }
         async fn request(
             &self,
             _hit: &Hit,
             _seasons: Seasons,
             _as_user: SeerrUserId,
+            _profile_id: Option<i64>,
         ) -> anyhow::Result<i64> {
+            unreachable!("not used by the webhook handler")
+        }
+        async fn profile_of(&self, _request_id: i64) -> anyhow::Result<Option<i64>> {
             unreachable!("not used by the webhook handler")
         }
         async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Pending>> {
@@ -476,5 +510,48 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert!(sent.lock().unwrap().is_empty());
+    }
+
+    /// Seerr sends `request_id` as a STRING, and this is the payload it
+    /// really put on the wire on 2026-09-09 at 11:02:49 -- the template in
+    /// `req-01.nix` reads `"request_id":"{{request_id}}"`, quotes included,
+    /// because a bare `{{request_id}}` would leave `{"request_id":}` behind
+    /// whenever there is no request. So the quotes are not a mistake in the
+    /// template; the mistake was reading them as a number.
+    ///
+    /// Every other test in this file builds the body with `serde_json::json!`
+    /// and an i64, so all of them agreed with each other and none of them
+    /// agreed with Seerr. The bot answered 400, logged "webhook body did not
+    /// parse", and the person who asked for the film was told nothing at all
+    /// -- not even that something had gone wrong.
+    #[tokio::test]
+    async fn seerrs_own_payload_carries_the_request_id_as_a_string() {
+        let (app, sent) = test_app();
+        let response = app
+            .oneshot(
+                Request::post("/seerr")
+                    .header("X-Webhook-Token", "t-o-k-e-n")
+                    .header("content-type", "application/json")
+                    // Written out by hand, NOT via json!(): the quoting is
+                    // the thing under test.
+                    .body(Body::from(
+                        r#"{"notification_type":"MEDIA_AVAILABLE","subject":"Gilbert Grape (1993)","request":{"request_id":"1849"}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a quoted request id is what Seerr actually sends"
+        );
+        let sent = sent.lock().unwrap();
+        assert_eq!(
+            sent.len(),
+            1,
+            "the requester must be told the film is there"
+        );
     }
 }

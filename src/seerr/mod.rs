@@ -1,4 +1,4 @@
-use crate::model::{Hit, MediaKind, Pending, PendingState, Seasons, SeerrUserId};
+use crate::model::{Hit, MediaKind, Pending, PendingState, QualityProfile, Seasons, SeerrUserId};
 use crate::secret::Secret;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
@@ -12,7 +12,19 @@ const STATUS_MEANS_ALREADY: &[i64] = &[2, 3, 4, 5];
 pub trait Requests: Send + Sync {
     async fn search(&self, query: &str, kind: Option<MediaKind>, page: u32) -> Result<Vec<Hit>>;
     async fn user_id(&self, authentik_username: &str) -> Result<Option<SeerrUserId>>;
-    async fn request(&self, hit: &Hit, seasons: Seasons, as_user: SeerrUserId) -> Result<i64>;
+    /// The quality profiles of whichever *arr serves this kind of media,
+    /// in the order that *arr lists them. The caller picks by NAME.
+    async fn quality_profiles(&self, kind: MediaKind) -> Result<Vec<QualityProfile>>;
+    async fn request(
+        &self,
+        hit: &Hit,
+        seasons: Seasons,
+        as_user: SeerrUserId,
+        profile_id: Option<i64>,
+    ) -> Result<i64>;
+    /// Which profile the request ACTUALLY carries, read back from Seerr.
+    /// `None` means Seerr named none, so the *arr's own default applies.
+    async fn profile_of(&self, request_id: i64) -> Result<Option<i64>>;
     async fn pending(&self, as_user: SeerrUserId) -> Result<Vec<Pending>>;
     async fn withdraw(&self, id: i64, as_user: SeerrUserId) -> Result<()>;
     /// Who asked for this request — the Authentik username, read from Seerr
@@ -33,8 +45,20 @@ impl<T: Requests + ?Sized> Requests for std::sync::Arc<T> {
     async fn user_id(&self, authentik_username: &str) -> Result<Option<SeerrUserId>> {
         (**self).user_id(authentik_username).await
     }
-    async fn request(&self, hit: &Hit, seasons: Seasons, as_user: SeerrUserId) -> Result<i64> {
-        (**self).request(hit, seasons, as_user).await
+    async fn quality_profiles(&self, kind: MediaKind) -> Result<Vec<QualityProfile>> {
+        (**self).quality_profiles(kind).await
+    }
+    async fn request(
+        &self,
+        hit: &Hit,
+        seasons: Seasons,
+        as_user: SeerrUserId,
+        profile_id: Option<i64>,
+    ) -> Result<i64> {
+        (**self).request(hit, seasons, as_user, profile_id).await
+    }
+    async fn profile_of(&self, request_id: i64) -> Result<Option<i64>> {
+        (**self).profile_of(request_id).await
     }
     async fn pending(&self, as_user: SeerrUserId) -> Result<Vec<Pending>> {
         (**self).pending(as_user).await
@@ -44,6 +68,15 @@ impl<T: Requests + ?Sized> Requests for std::sync::Arc<T> {
     }
     async fn requester_of(&self, request_id: i64) -> Result<Option<String>> {
         (**self).requester_of(request_id).await
+    }
+}
+
+/// Which *arr serves this kind of media. Their id spaces are separate, so
+/// this is also the answer to "whose numbers am I holding".
+fn arr_of(kind: MediaKind) -> &'static str {
+    match kind {
+        MediaKind::Movie => "radarr",
+        MediaKind::Tv => "sonarr",
     }
 }
 
@@ -183,11 +216,84 @@ impl Requests for SeerrClient {
             .map(SeerrUserId))
     }
 
-    async fn request(&self, hit: &Hit, seasons: Seasons, as_user: SeerrUserId) -> Result<i64> {
+    /// Two calls, because the profiles hang off ONE server and Seerr can
+    /// hold several: the list says which is the default, the detail carries
+    /// that server's profiles. Neither answer contains an `apiKey` -- the
+    /// route that would is `/settings/radarr`, and it needs ADMIN.
+    async fn quality_profiles(&self, kind: MediaKind) -> Result<Vec<QualityProfile>> {
+        let service = arr_of(kind);
+        let servers = self
+            .json(
+                self.get(&format!("/api/v1/service/{service}"))
+                    .send()
+                    .await?,
+            )
+            .await?;
+        let servers = servers
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("seerr did not list any {service} server"))?;
+        // The default is the one FLAGGED default -- not the first, and not
+        // id 0. Falling back to the first only when none is flagged.
+        let server = servers
+            .iter()
+            .find(|s| s.get("isDefault").and_then(|d| d.as_bool()) == Some(true))
+            .or_else(|| servers.first())
+            .ok_or_else(|| anyhow::anyhow!("seerr has no {service} server configured"))?;
+        let server_id = server
+            .get("id")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("the {service} server carries no id"))?;
+
+        let detail = self
+            .json(
+                self.get(&format!("/api/v1/service/{service}/{server_id}"))
+                    .send()
+                    .await?,
+            )
+            .await?;
+        Ok(detail
+            .get("profiles")
+            .and_then(|p| p.as_array())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|p| {
+                Some(QualityProfile {
+                    id: p.get("id")?.as_i64()?,
+                    name: p.get("name")?.as_str()?.to_string(),
+                })
+            })
+            .collect())
+    }
+
+    async fn profile_of(&self, request_id: i64) -> Result<Option<i64>> {
+        let body = self
+            .json(
+                self.get(&format!("/api/v1/request/{request_id}"))
+                    .send()
+                    .await?,
+            )
+            .await?;
+        Ok(body.get("profileId").and_then(|v| v.as_i64()))
+    }
+
+    async fn request(
+        &self,
+        hit: &Hit,
+        seasons: Seasons,
+        as_user: SeerrUserId,
+        profile_id: Option<i64>,
+    ) -> Result<i64> {
         let mut body = serde_json::json!({
             "mediaId": hit.tmdb_id,
             "mediaType": match hit.kind { MediaKind::Movie => "movie", MediaKind::Tv => "tv" },
         });
+        // OMITTED, not null, when nobody chose: Seerr then takes the *arr's
+        // own default. A `"profileId": null` is a value, and a value has to
+        // be interpreted by the other side.
+        if let Some(id) = profile_id {
+            body["profileId"] = serde_json::json!(id);
+        }
         match seasons {
             Seasons::NotApplicable => {}
             Seasons::All => body["seasons"] = serde_json::Value::String("all".into()),
@@ -316,13 +422,20 @@ mod arc_requests_tests {
         async fn user_id(&self, _authentik_username: &str) -> Result<Option<SeerrUserId>> {
             Ok(Some(SeerrUserId(7)))
         }
+        async fn quality_profiles(&self, _kind: MediaKind) -> Result<Vec<QualityProfile>> {
+            Ok(vec![])
+        }
         async fn request(
             &self,
             _hit: &Hit,
             _seasons: Seasons,
             _as_user: SeerrUserId,
+            _profile_id: Option<i64>,
         ) -> Result<i64> {
             Ok(1849)
+        }
+        async fn profile_of(&self, _request_id: i64) -> Result<Option<i64>> {
+            Ok(None)
         }
         async fn pending(&self, _as_user: SeerrUserId) -> Result<Vec<Pending>> {
             Ok(vec![Pending {
@@ -376,6 +489,7 @@ mod arc_requests_tests {
                     },
                     Seasons::NotApplicable,
                     SeerrUserId(7),
+                    None,
                 )
                 .await
                 .unwrap(),
