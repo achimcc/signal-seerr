@@ -194,6 +194,7 @@ async fn main() -> Result<()> {
             Catalogue::load(),
             config.settings_url.clone(),
             config.operator_name.clone(),
+            config.quality_profiles.clone(),
         );
         tokio::spawn(async move {
             tracing::info!("signal-seerr is up");

@@ -10,7 +10,7 @@ Schreib mir einfach einen Titel, dann suche ich.
 
 /film <titel>   sucht nur Filme
 /serie <titel>  sucht nur Serien
-1 … 5           wählt aus der Trefferliste
+1 … 5           wählt aus der Trefferliste — und danach die Fassung
 m               zeigt die nächsten Treffer
 /status         was von dir noch unterwegs ist
 /weg <nummer>   nimmt einen Wunsch zurück
@@ -28,6 +28,8 @@ already = "✓ schon da"
 
 [request]
 placed = "{title} ist eingetragen. Ich melde mich, sobald es da ist.\nVertippt? /weg {id} nimmt es wieder raus."
+placed_with_profile = "{title} ist eingetragen ({profile}). Ich melde mich, sobald es da ist.\nVertippt? /weg {id} nimmt es wieder raus."
+profile_question = "{title} — in welcher Fassung? Antworte mit der Nummer."
 already = "{title} gibt es schon."
 seasons_question = "{title} — welche Staffeln? „alle\", oder Nummern wie „1 2\"."
 withdrawn = "Wunsch {id} ist zurückgenommen."

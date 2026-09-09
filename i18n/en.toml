@@ -10,7 +10,7 @@ Just send me a title and I'll search for it.
 
 /movie <title>       searches movies only
 /series <title>      searches series only
-1 … 5                picks from the results
+1 … 5                picks from the results — and then the version
 more                 shows the next results
 /status              what's still on the way for you
 /withdraw <number>   withdraws a request
@@ -28,6 +28,8 @@ already = "✓ already there"
 
 [request]
 placed = "{title} is on the list. I'll let you know once it's here.\nWrong one? /withdraw {id} takes it off again."
+placed_with_profile = "{title} is on the list ({profile}). I'll let you know once it's here.\nWrong one? /withdraw {id} takes it off again."
+profile_question = "{title} — which version? Answer with the number."
 already = "{title} is already there."
 seasons_question = "{title} — which seasons? \"all\", or numbers like \"1 2\"."
 withdrawn = "Request {id} has been withdrawn."

@@ -117,6 +117,11 @@ media_group   = "Medien"
 jellyfin_url  = "https://jellyfin.example.invalid"
 settings_url  = "https://example.invalid/account"
 operator_name = "the operator"
+
+quality_profiles = [
+  "Dual Language, then German (1080p)",
+  "Rarity, original language (SD too)",
+]
 ```
 
 **No secret goes in this file.** Every credential is a `*_file` option
@@ -146,6 +151,17 @@ A field-by-field note on what is not obvious from the name:
   can enter their Signal username.
 - `jellyfin_url` is only ever put into the "it's here" message; the bot
   never talks to Jellyfin directly.
+- `quality_profiles` are matched against the *arr behind Seerr **by name**,
+  and offered in the order written here. Radarr and Sonarr keep separate id
+  spaces — on the author's instance both happen to run 7..11, which is
+  exactly what makes a number-based mapping look correct until a profile is
+  added on one side — so nothing in this bot ever maps a profile by number.
+  A name no *arr knows is dropped with a line in the journal rather than
+  renumbering the list under the people who learned it. Leave the field out
+  and the bot offers Seerr's own list in Seerr's order; leave Seerr with no
+  profiles and the question is skipped entirely, the request going out with
+  no `profileId` at all. A wish never fails because a question could not be
+  asked.
 - `poll_seconds` is how often the Authentik directory is reconciled — a new
   member's greeting, and a removed member's goodbye, land within this
   window, not instantly.

@@ -135,6 +135,7 @@ fn dialog(seerr: FakeSeerr, known: bool) -> Dialog<FakeSeerr, FakeDirectory> {
         Catalogue::load(),
         settings_url(),
         operator_name(),
+        Vec::new(),
     )
 }
 
@@ -181,6 +182,7 @@ async fn a_known_account_without_the_media_group_gets_a_different_sentence() {
         Catalogue::load(),
         settings_url(),
         operator_name(),
+        Vec::new(),
     );
     let out = d.handle(&aci, "blade runner").await;
     // The human is right, the group is missing. The other sentence would send
@@ -550,6 +552,7 @@ async fn status_lists_what_is_still_on_its_way() {
         Catalogue::load(),
         settings_url(),
         operator_name(),
+        Vec::new(),
     );
 
     let out = d.handle(&aci, "/status").await;
@@ -627,6 +630,7 @@ async fn weg_on_somebody_elses_request_reports_it_as_not_yours() {
         Catalogue::load(),
         settings_url(),
         operator_name(),
+        Vec::new(),
     );
     let out = d.handle(&aci, "/weg 1849").await;
     assert!(
@@ -750,4 +754,263 @@ async fn a_non_numeric_seasons_answer_is_refused() {
     let out = d.handle(&aci, "eins").await;
     assert!(out[0].contains("Staffeln"), "asked again, got: {}", out[0]);
     assert!(placed(&d).is_empty());
+}
+
+// ===========================================================================
+// Die Profilfrage (Entwurf §4.2 / §4.3)
+// ===========================================================================
+
+/// Two profiles under names that differ from the ids, so a mix-up shows.
+fn zwei_profile() -> Vec<QualityProfile> {
+    vec![
+        QualityProfile {
+            id: 7,
+            name: "Dual Language, sonst Deutsch (1080p)".into(),
+        },
+        QualityProfile {
+            id: 11,
+            name: "Rarität, Originalsprache (auch SD)".into(),
+        },
+    ]
+}
+
+fn seerr_mit_profilen() -> FakeSeerr {
+    FakeSeerr {
+        hits: vec![movie(1, "Blade Runner 2049")],
+        profiles: zwei_profile(),
+        ..Default::default()
+    }
+}
+
+/// Choosing a film no longer places the request straight away: the profile
+/// question comes first, and NOTHING has reached Seerr until it is answered.
+/// A request placed before the person picked would make the question a lie.
+#[tokio::test]
+async fn choosing_a_film_asks_for_the_profile_before_placing_anything() {
+    let mut d = dialog(seerr_mit_profilen(), true);
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "blade runner").await;
+    let answer = d.handle(&aci, "1").await.join("\n");
+
+    assert!(
+        answer.contains("Dual Language, sonst Deutsch (1080p)"),
+        "the question must list the profiles, got: {answer}"
+    );
+    assert!(answer.contains("Rarität, Originalsprache (auch SD)"));
+    assert!(
+        d.seerr_ref().placed.lock().unwrap().is_empty(),
+        "nothing may be requested before the profile is chosen"
+    );
+}
+
+/// The digit picks by POSITION in the configured list, and what travels is
+/// that entry's id. The two differ on purpose here (position 2 -> id 11): a
+/// bot that sent the position would look right for the first entry alone.
+#[tokio::test]
+async fn the_answer_sends_that_profiles_id_not_its_position() {
+    let mut d = dialog(seerr_mit_profilen(), true);
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "blade runner").await;
+    d.handle(&aci, "1").await;
+    d.handle(&aci, "2").await;
+
+    assert_eq!(
+        *d.seerr_ref().asked_profile.lock().unwrap(),
+        Some(11),
+        "position 2 is the profile with id 11"
+    );
+    assert_eq!(d.seerr_ref().placed.lock().unwrap().len(), 1);
+}
+
+/// With no profiles to offer -- none configured, or Seerr unreachable -- the
+/// request still goes out, carrying no profileId, exactly as it did before
+/// this question existed. A wish must never fail because a question could
+/// not be asked.
+#[tokio::test]
+async fn without_profiles_the_request_goes_out_unasked() {
+    let mut d = dialog(
+        FakeSeerr {
+            hits: vec![movie(1, "Blade Runner 2049")],
+            profiles: vec![],
+            ..Default::default()
+        },
+        true,
+    );
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "blade runner").await;
+    let answer = d.handle(&aci, "1").await.join("\n");
+
+    assert_eq!(d.seerr_ref().placed.lock().unwrap().len(), 1);
+    assert_eq!(*d.seerr_ref().asked_profile.lock().unwrap(), None);
+    assert!(
+        answer.contains("Blade Runner 2049"),
+        "the confirmation, not a question: {answer}"
+    );
+}
+
+/// A series asks for seasons FIRST and the profile second (§4.3): somebody
+/// who mistyped the title should notice it at the seasons question, before
+/// answering a second one -- and the season choice is the one nobody can
+/// make without the title in mind.
+#[tokio::test]
+async fn a_series_is_asked_for_seasons_first_then_the_profile() {
+    let series = Hit {
+        tmdb_id: 2,
+        kind: MediaKind::Tv,
+        title: "Andor".into(),
+        year: Some(2022),
+        rating: Some(8.4),
+        seasons: 2,
+        already: false,
+    };
+    let mut d = dialog(
+        FakeSeerr {
+            hits: vec![series],
+            profiles: zwei_profile(),
+            ..Default::default()
+        },
+        true,
+    );
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "andor").await;
+    let nach_wahl = d.handle(&aci, "1").await.join("\n");
+    assert!(
+        nach_wahl.contains("Staffeln"),
+        "seasons come first: {nach_wahl}"
+    );
+
+    let nach_staffeln = d.handle(&aci, "alle").await.join("\n");
+    assert!(
+        nach_staffeln.contains("Rarität, Originalsprache (auch SD)"),
+        "and the profile question follows: {nach_staffeln}"
+    );
+    assert!(
+        d.seerr_ref().placed.lock().unwrap().is_empty(),
+        "still nothing placed"
+    );
+
+    d.handle(&aci, "1").await;
+    assert_eq!(*d.seerr_ref().asked_profile.lock().unwrap(), Some(7));
+    assert_eq!(d.seerr_ref().placed.lock().unwrap().len(), 1);
+}
+
+/// /abbruch and /hilfe are the two ways OUT of any open question (§4.3), and
+/// the profile question must not swallow them either: answering "which
+/// profile?" to somebody who typed /abbruch traps them in the question they
+/// are trying to leave.
+#[tokio::test]
+async fn cancel_and_help_still_get_through_an_open_profile_question() {
+    let mut d = dialog(seerr_mit_profilen(), true);
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "blade runner").await;
+    d.handle(&aci, "1").await;
+
+    let hilfe = d.handle(&aci, "/hilfe").await.join("\n");
+    assert!(hilfe.contains("/abbruch"), "help, not the question again");
+
+    // /hilfe leaves the question OPEN -- asking what you can type must not
+    // cost you your place.
+    let weiter = d.handle(&aci, "1").await;
+    assert_eq!(d.seerr_ref().placed.lock().unwrap().len(), 1, "{weiter:?}");
+
+    // And /abbruch clears it.
+    d.handle(&aci, "blade runner").await;
+    d.handle(&aci, "1").await;
+    let abbruch = d.handle(&aci, "/abbruch").await;
+    assert!(abbruch.is_empty(), "cancel says nothing and clears");
+}
+
+/// An answer that is not one of the offered numbers repeats the question
+/// rather than falling through to a search for "9".
+#[tokio::test]
+async fn a_number_outside_the_list_repeats_the_profile_question() {
+    let mut d = dialog(seerr_mit_profilen(), true);
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "blade runner").await;
+    d.handle(&aci, "1").await;
+    let nochmal = d.handle(&aci, "9").await.join("\n");
+
+    assert!(nochmal.contains("Rarität, Originalsprache (auch SD)"));
+    assert!(d.seerr_ref().placed.lock().unwrap().is_empty());
+}
+
+/// What the bot reports is what Seerr says the request CARRIES, read back
+/// after placing it -- not the bot's own intention. An `OverrideRule` can
+/// replace a sent `profileId` silently (`MediaRequest.js:259-263`); there
+/// are none today, and that is a measurement, not a property.
+#[tokio::test]
+async fn the_confirmation_names_the_profile_seerr_actually_kept() {
+    let mut d = dialog(
+        FakeSeerr {
+            hits: vec![movie(1, "Blade Runner 2049")],
+            profiles: zwei_profile(),
+            // The bot asks for 7; Seerr answers that it kept 11.
+            readback: Some(11),
+            ..Default::default()
+        },
+        true,
+    );
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "blade runner").await;
+    d.handle(&aci, "1").await;
+    let bestaetigung = d.handle(&aci, "1").await.join("\n");
+
+    assert_eq!(*d.seerr_ref().asked_profile.lock().unwrap(), Some(7));
+    assert!(
+        bestaetigung.contains("Rarität, Originalsprache (auch SD)"),
+        "the confirmation must name what Seerr kept (11), not what we sent (7): {bestaetigung}"
+    );
+}
+
+/// The configured order wins over Seerr's, and a configured name no *arr
+/// knows is dropped rather than renumbering the list under the people who
+/// learned it.
+///
+/// Seerr here lists the profiles in one order; the configuration asks for
+/// the reverse, plus one name that does not exist. What the person sees must
+/// be the configured order, without the phantom.
+#[tokio::test]
+async fn the_configured_order_wins_over_seerrs_own() {
+    let aci = Aci("aaaa".into());
+    let mut d = Dialog::new(
+        FakeSeerr {
+            hits: vec![movie(1, "Blade Runner 2049")],
+            profiles: zwei_profile(),
+            ..Default::default()
+        },
+        FakeDirectory(vec![(aci.clone(), member())]),
+        Catalogue::load(),
+        settings_url(),
+        operator_name(),
+        vec![
+            "Rarität, Originalsprache (auch SD)".to_string(),
+            "Gibt es nicht".to_string(),
+            "Dual Language, sonst Deutsch (1080p)".to_string(),
+        ],
+    );
+
+    d.handle(&aci, "blade runner").await;
+    let frage = d.handle(&aci, "1").await.join("\n");
+
+    let raritaet = frage.find("Rarität").expect("die Rarität fehlt");
+    let dual = frage.find("Dual Language").expect("Dual Language fehlt");
+    assert!(
+        raritaet < dual,
+        "die konfigurierte Reihenfolge gilt, nicht Seerrs: {frage}"
+    );
+    assert!(
+        !frage.contains("Gibt es nicht"),
+        "ein Name, den kein *arr kennt, steht nicht in der Liste: {frage}"
+    );
+
+    // Und "1" ist jetzt die Rarität -- id 11, nicht 7.
+    d.handle(&aci, "1").await;
+    assert_eq!(*d.seerr_ref().asked_profile.lock().unwrap(), Some(11));
 }

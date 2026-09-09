@@ -25,6 +25,21 @@ pub struct Config {
     /// Who to ask when a group is missing -- substituted into
     /// error.not_allowed. Same reasoning as settings_url.
     pub operator_name: String,
+    /// The quality profiles to offer, by NAME, in the order they are
+    /// offered in.
+    ///
+    /// By name and never by id: Radarr and Sonarr keep separate id spaces,
+    /// and the same number means a different profile on each side. By
+    /// configuration and not in Seerr's own order: otherwise "3" means
+    /// something else the week somebody adds a profile, and whoever learned
+    /// to type it gets a different film.
+    ///
+    /// Empty (the default) means "offer whatever Seerr lists" -- and when
+    /// Seerr lists nothing, the request simply carries no profile, exactly
+    /// as it did before this question existed. A wish must never fail
+    /// because a question could not be asked.
+    #[serde(default)]
+    pub quality_profiles: Vec<String>,
 }
 
 impl Config {
@@ -67,6 +82,7 @@ impl Config {
             jellyfin_url: "https://example.invalid".into(),
             settings_url: "https://example.invalid/account".into(),
             operator_name: "the operator".into(),
+            quality_profiles: Vec::new(),
         }
     }
 }

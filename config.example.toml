@@ -28,3 +28,16 @@ settings_url = "https://example.invalid/account"
 
 # Who to ask when a group is missing, shown to a known but ungrouped sender.
 operator_name = "the operator"
+
+# Which quality profiles to offer after a title is chosen, BY NAME, in the
+# order they are offered in. Leave it out to offer whatever Seerr lists, in
+# Seerr's order -- or to ask nothing at all when it lists nothing.
+#
+# By name and never by id: Radarr and Sonarr keep separate id spaces, so the
+# same number is a different profile on each side. In your own order and not
+# Seerr's: otherwise "3" means something else the week somebody adds a
+# profile, and whoever learned to type it gets a different film.
+# quality_profiles = [
+#   "Dual Language, then German (1080p)",
+#   "Rarity, original language (SD too)",
+# ]

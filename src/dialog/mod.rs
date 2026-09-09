@@ -1,6 +1,6 @@
 use crate::directory::Directory;
 use crate::i18n::{Catalogue, Locale};
-use crate::model::{Aci, Hit, MediaKind, PendingState, Seasons, SeerrUserId};
+use crate::model::{Aci, Hit, MediaKind, PendingState, QualityProfile, Seasons, SeerrUserId};
 use crate::seerr::Requests;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -51,6 +51,15 @@ pub enum Conversation {
         hit: Hit,
         at: Instant,
     },
+    /// The profile question, the last step before the wish goes out (§4.2).
+    /// It carries the seasons already answered, so a series does not have to
+    /// be asked twice.
+    Profile {
+        hit: Hit,
+        seasons: Seasons,
+        choices: Vec<QualityProfile>,
+        at: Instant,
+    },
 }
 
 pub struct Dialog<R: Requests, D: Directory> {
@@ -64,6 +73,14 @@ pub struct Dialog<R: Requests, D: Directory> {
     /// Who to ask when a group is missing -- substituted into
     /// error.not_allowed. Same reasoning as settings_url.
     operator_name: String,
+    /// The profile names to offer, IN THE ORDER THEY ARE OFFERED IN.
+    ///
+    /// Deployment configuration, and deliberately not Seerr's own ordering:
+    /// otherwise "3" means something else the week somebody adds a profile,
+    /// and the person who learned to type it gets a different film. Names
+    /// that no *arr knows are dropped with a line in the journal; an empty
+    /// list means "offer whatever Seerr lists, in Seerr's order".
+    quality_profiles: Vec<String>,
     conversations: HashMap<Aci, Conversation>,
     told_strangers: HashMap<Aci, Instant>,
 }
@@ -75,6 +92,7 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         catalogue: Catalogue,
         settings_url: String,
         operator_name: String,
+        quality_profiles: Vec<String>,
     ) -> Self {
         Dialog {
             seerr,
@@ -82,6 +100,7 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
             catalogue,
             settings_url,
             operator_name,
+            quality_profiles,
             conversations: HashMap::new(),
             told_strangers: HashMap::new(),
         }
@@ -114,7 +133,9 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
             .expect("age must not exceed how long this process has been up");
         match &mut conversation {
             Conversation::Idle => {}
-            Conversation::Results { at: a, .. } | Conversation::Seasons { at: a, .. } => *a = at,
+            Conversation::Results { at: a, .. }
+            | Conversation::Seasons { at: a, .. }
+            | Conversation::Profile { at: a, .. } => *a = at,
         }
         self.conversations.insert(from.clone(), conversation);
     }
@@ -158,6 +179,22 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         if let Some(Conversation::Seasons { hit, at }) = self.conversations.get(from).cloned() {
             if at.elapsed() <= RESULTS_LIVE {
                 return self.place_series(from, locale, hit, text).await;
+            }
+            self.conversations.remove(from);
+        }
+
+        // And so does an open profile question, for the same reason.
+        if let Some(Conversation::Profile {
+            hit,
+            seasons,
+            choices,
+            at,
+        }) = self.conversations.get(from).cloned()
+        {
+            if at.elapsed() <= RESULTS_LIVE {
+                return self
+                    .answer_profile(from, locale, hit, seasons, &choices, text)
+                    .await;
             }
             self.conversations.remove(from);
         }
@@ -233,7 +270,8 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
             return vec![question];
         }
 
-        self.place(from, locale, &hit, Seasons::NotApplicable).await
+        self.ask_profile(from, locale, hit, Seasons::NotApplicable)
+            .await
     }
 
     async fn place_series(
@@ -269,7 +307,7 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
                 }
             }
         };
-        self.place(from, locale, &hit, seasons).await
+        self.ask_profile(from, locale, hit, seasons).await
     }
 
     /// The lookup `place`, `status`, and `withdraw` all need before they can
@@ -297,12 +335,112 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         }
     }
 
+    /// Asks which profile -- or places the wish straight away when there is
+    /// nothing to choose between.
+    ///
+    /// A wish must never fail because a question could not be asked: if Seerr
+    /// cannot be reached for the list, or the list is empty, or none of the
+    /// configured names exists, the request goes out carrying no `profileId`
+    /// and the *arr applies its own default. That is exactly what happened
+    /// before this question existed.
+    async fn ask_profile(
+        &mut self,
+        from: &Aci,
+        locale: Locale,
+        hit: Hit,
+        seasons: Seasons,
+    ) -> Vec<String> {
+        let available = match self.seerr.quality_profiles(hit.kind).await {
+            Ok(list) => list,
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot read the quality profiles");
+                Vec::new()
+            }
+        };
+        let choices = self.order_profiles(available);
+        if choices.is_empty() {
+            return self.place(from, locale, &hit, seasons, None, &[]).await;
+        }
+
+        let question = self.render_profiles(&hit, &choices, locale);
+        self.conversations.insert(
+            from.clone(),
+            Conversation::Profile {
+                hit,
+                seasons,
+                choices,
+                at: Instant::now(),
+            },
+        );
+        vec![question]
+    }
+
+    /// Puts the offered profiles into the configured order, dropping the ones
+    /// no *arr knows. An empty configuration means "take Seerr's own list".
+    fn order_profiles(&self, available: Vec<QualityProfile>) -> Vec<QualityProfile> {
+        if self.quality_profiles.is_empty() {
+            return available;
+        }
+        let mut ordered = Vec::new();
+        for wanted in &self.quality_profiles {
+            match available.iter().find(|p| &p.name == wanted) {
+                Some(found) => ordered.push(found.clone()),
+                // Named in the configuration, unknown to the *arr. Dropping
+                // it silently would renumber the list under the people who
+                // learned it, so it is said out loud -- once per request,
+                // which is cheap, and in the journal, where it belongs.
+                None => tracing::warn!(profile = wanted, "no *arr knows this profile name"),
+            }
+        }
+        ordered
+    }
+
+    fn render_profiles(&self, hit: &Hit, choices: &[QualityProfile], locale: Locale) -> String {
+        let mut out =
+            self.catalogue
+                .text(locale, "request.profile_question", &[("title", &hit.title)]);
+        out.push('\n');
+        for (index, profile) in choices.iter().enumerate() {
+            out.push_str(&format!("{}. {}\n", index + 1, profile.name));
+        }
+        out
+    }
+
+    async fn answer_profile(
+        &mut self,
+        from: &Aci,
+        locale: Locale,
+        hit: Hit,
+        seasons: Seasons,
+        choices: &[QualityProfile],
+        answer: &str,
+    ) -> Vec<String> {
+        let picked = answer
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| n.checked_sub(1))
+            .and_then(|i| choices.get(i));
+        let Some(profile) = picked else {
+            // Repeat the question rather than fall through to a search for
+            // "9" -- the same rule the seasons question follows.
+            return vec![self.render_profiles(&hit, choices, locale)];
+        };
+        let id = profile.id;
+        self.place(from, locale, &hit, seasons, Some(id), choices)
+            .await
+    }
+
     async fn place(
         &mut self,
         from: &Aci,
         locale: Locale,
         hit: &Hit,
         seasons: Seasons,
+        profile_id: Option<i64>,
+        // The list this conversation was just offered -- the confirmation
+        // names the profile from here rather than asking Seerr again.
+        choices: &[QualityProfile],
     ) -> Vec<String> {
         let user = match self.seerr_user(from, locale).await {
             Ok(id) => id,
@@ -310,16 +448,52 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         };
 
         self.conversations.remove(from);
-        match self.seerr.request(hit, seasons, user, None).await {
-            Ok(id) => vec![self.catalogue.text(
+        let placed = self.seerr.request(hit, seasons, user, profile_id).await;
+        let id = match placed {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot place the request");
+                return vec![self.catalogue.text(locale, "error.seerr_down", &[])];
+            }
+        };
+
+        // Read back what the request CARRIES, rather than trusting what we
+        // sent: an OverrideRule can replace a `profileId` silently
+        // (MediaRequest.js:259-263). There are none today -- a measurement,
+        // not a property of Seerr.
+        let kept = match self.seerr.profile_of(id).await {
+            Ok(kept) => kept,
+            Err(e) => {
+                tracing::warn!(error = %e, request = id, "cannot read back the profile");
+                profile_id
+            }
+        };
+        if kept != profile_id {
+            tracing::warn!(
+                sent = ?profile_id,
+                kept = ?kept,
+                request = id,
+                "seerr kept a different profile than the one asked for"
+            );
+        }
+
+        let id_text = id.to_string();
+        let name = kept.and_then(|k| choices.iter().find(|p| p.id == k).map(|p| p.name.clone()));
+        match name {
+            Some(name) => vec![self.catalogue.text(
+                locale,
+                "request.placed_with_profile",
+                &[
+                    ("title", hit.title.as_str()),
+                    ("id", id_text.as_str()),
+                    ("profile", name.as_str()),
+                ],
+            )],
+            None => vec![self.catalogue.text(
                 locale,
                 "request.placed",
                 &[("title", &hit.title), ("id", &id.to_string())],
             )],
-            Err(e) => {
-                tracing::warn!(error = %e, "cannot place the request");
-                vec![self.catalogue.text(locale, "error.seerr_down", &[])]
-            }
         }
     }
 
@@ -638,6 +812,7 @@ mod tests {
             Catalogue::load(),
             "https://example.invalid".to_string(),
             "the operator".to_string(),
+            Vec::new(),
         );
         let aci = Aci("aaaa".into());
         d.insert_conversation_aged(
@@ -673,6 +848,7 @@ mod tests {
             Catalogue::load(),
             "https://example.invalid".to_string(),
             "the operator".to_string(),
+            Vec::new(),
         );
         let aci = Aci("aaaa".into());
         let series = Hit {
