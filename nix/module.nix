@@ -66,7 +66,15 @@ in
 
         DynamicUser = true;
         StateDirectory = "signal-seerr";
-        RuntimeDirectory = "signal-seerr";
+        # No RuntimeDirectory here, deliberately: this service does not use
+        # one, and declaring one anyway is not harmless. systemd creates a
+        # RuntimeDirectory fresh -- clearing anything already in it -- on
+        # every start, and removes it on every stop. A directory of the
+        # same name that something else (signal-cli, in particular) also
+        # writes into gets wiped out from under it on every restart of
+        # *this* unit. Confirmed with a `systemd-run --property=RuntimeDirectory=`
+        # experiment: a file placed in the directory before a restart is
+        # gone immediately after.
 
         NoNewPrivileges = true;
         PrivateTmp = true;

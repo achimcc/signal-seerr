@@ -8,7 +8,13 @@ pkgs.testers.runNixOSTest {
       enable = true;
       inherit package;
       settings = {
-        signal_socket = "/run/signal-seerr/fake.sock";
+        # Deliberately NOT under /run/signal-seerr: that directory belongs
+        # to nobody in particular (the module declares no RuntimeDirectory
+        # for it, on purpose -- see nix/module.nix), and this path matches
+        # where the real signal-cli's own socket lives
+        # (config.example.toml's /run/signal-cli/socket), owned by
+        # signal-cli's own unit, not this one.
+        signal_socket = "/run/signal-cli/fake.sock";
         signal_account = "+490000";
         authentik_url = "http://127.0.0.1:9";
         authentik_token_file = "/run/secrets/tok";
@@ -30,9 +36,9 @@ pkgs.testers.runNixOSTest {
       wantedBy = [ "multi-user.target" ];
       serviceConfig.Type = "simple";
       script = ''
-        mkdir -p /run/signal-seerr /run/secrets
+        mkdir -p /run/signal-cli /run/secrets
         printf t > /run/secrets/tok; printf k > /run/secrets/key; printf h > /run/secrets/hook
-        exec ${pkgs.socat}/bin/socat UNIX-LISTEN:/run/signal-seerr/fake.sock,fork -
+        exec ${pkgs.socat}/bin/socat UNIX-LISTEN:/run/signal-cli/fake.sock,fork -
       '';
     };
   };
