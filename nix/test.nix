@@ -38,7 +38,17 @@ pkgs.testers.runNixOSTest {
       script = ''
         mkdir -p /run/signal-cli /run/secrets
         printf t > /run/secrets/tok; printf k > /run/secrets/key; printf h > /run/secrets/hook
-        exec ${pkgs.socat}/bin/socat UNIX-LISTEN:/run/signal-cli/fake.sock,fork -
+        # mode=0777: this script runs as root (no User= set) and socat's
+        # default is 0755, owner root. signal-seerr runs under DynamicUser,
+        # an ephemeral uid/gid unrelated to root's -- connecting to a UNIX
+        # stream socket needs write permission on it, which "other" would
+        # not have at 0755. The real deployment solves the equivalent
+        # problem deliberately, via extraServiceConfig's
+        # SupplementaryGroups; this stand-in has no such group to grant, so
+        # it opens the socket to everyone instead. A production socket
+        # should NOT be world-writable -- this one exists only for the
+        # test.
+        exec ${pkgs.socat}/bin/socat UNIX-LISTEN:/run/signal-cli/fake.sock,fork,mode=0777 -
       '';
     };
   };
