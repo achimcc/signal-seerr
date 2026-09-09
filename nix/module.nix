@@ -50,6 +50,27 @@ in
       requires = [ "signal-cli.service" ];
       wantedBy = [ "multi-user.target" ];
 
+      # StartLimitBurst/StartLimitIntervalSec are [Unit]-section keys, not
+      # [Service] ones, and belong here rather than in serviceConfig below
+      # -- confirmed with `systemd-analyze verify` against the built unit
+      # file after an earlier version of this module put
+      # StartLimitIntervalSec under serviceConfig: systemd logged "Unknown
+      # key 'StartLimitIntervalSec' in section [Service], ignoring" and
+      # silently fell back to its own built-in default interval, which is
+      # far shorter than a single restart cycle of this service -- so the
+      # limit could never accumulate more than one attempt inside its own
+      # window and never tripped, no matter how many times the service
+      # actually restarted. StartLimitBurst alone happened to be accepted
+      # in [Service] too (an accepted legacy alias) and so caused no
+      # warning, which is what made this easy to miss.
+      unitConfig = {
+        # A bounded restart loop. Without it, a persistently failing
+        # service restarts forever and never reaches the `failed` state --
+        # so nothing that watches for failed units ever sees it.
+        StartLimitBurst = 5;
+        StartLimitIntervalSec = 300;
+      };
+
       serviceConfig = {
         # simple, not oneshot: a unit that has not finished starting holds
         # up everything ordered after it, and a service that waits for a
@@ -58,11 +79,6 @@ in
         ExecStart = "${lib.getExe cfg.package} ${configFile}";
         Restart = "on-failure";
         RestartSec = "10s";
-        # A bounded restart loop. Without it, a persistently failing
-        # service restarts forever and never reaches the `failed` state --
-        # so nothing that watches for failed units ever sees it.
-        StartLimitBurst = 5;
-        StartLimitIntervalSec = 300;
 
         DynamicUser = true;
         StateDirectory = "signal-seerr";
