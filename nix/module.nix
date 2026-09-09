@@ -37,7 +37,12 @@ in
 
   config = lib.mkIf cfg.enable {
     # Deliberately NOT a hardened unit with its own mount namespace beyond
-    # what is listed here. The paths are few and named.
+    # what is listed here. A sandboxing option that gives a unit its own
+    # mount or network namespace (several of the Protect* family do) can
+    # break something that looks completely unrelated, and break it
+    # silently -- systemd reports the unit as healthy regardless. Add one
+    # only after checking, on the running service, that nothing it actually
+    # needs lives outside what that namespace still allows.
     systemd.services.signal-seerr = {
       description = "Signal bot for Seerr requests";
       after = [ "network-online.target" "signal-cli.service" ];
@@ -46,15 +51,16 @@ in
       wantedBy = [ "multi-user.target" ];
 
       serviceConfig = {
-        # simple, not oneshot: the unit counts as started at once, so a guest
-        # boot never waits on it.
+        # simple, not oneshot: a unit that has not finished starting holds
+        # up everything ordered after it, and a service that waits for a
+        # socket to appear inside a oneshot can hold up the whole boot.
         Type = "simple";
         ExecStart = "${lib.getExe cfg.package} ${configFile}";
         Restart = "on-failure";
         RestartSec = "10s";
-        # A bounded restart loop. Without it a persistently failing unit keeps
-        # the container in `activating` for ever instead of showing up as
-        # `failed` where the guest check and the alarm mail can see it.
+        # A bounded restart loop. Without it, a persistently failing
+        # service restarts forever and never reaches the `failed` state --
+        # so nothing that watches for failed units ever sees it.
         StartLimitBurst = 5;
         StartLimitIntervalSec = 300;
 
