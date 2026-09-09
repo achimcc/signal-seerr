@@ -48,7 +48,21 @@ pkgs.testers.runNixOSTest {
         # it opens the socket to everyone instead. A production socket
         # should NOT be world-writable -- this one exists only for the
         # test.
-        exec ${pkgs.socat}/bin/socat UNIX-LISTEN:/run/signal-cli/fake.sock,fork,mode=0777 -
+        #
+        # EXEC:cat, not the bare "-" (this process's own stdio): under
+        # systemd a service's stdin is /dev/null by default, so "-" hits
+        # EOF the instant a client connects, socat tears the connection
+        # down again immediately, and signal-seerr treats that exactly as
+        # it should treat a real dropped connection -- as fatal, exiting
+        # so its restart limit can do its job (see nix/module.nix). That is
+        # correct behaviour for a connection that really closes, but it
+        # means this fixture could never hold still long enough to test the
+        # steady running state at all -- the assertions below need the bot
+        # to actually stay up. EXEC:cat gives each accepted connection a
+        # fresh subprocess with its own pipe, which just blocks reading
+        # (nothing is ever sent to it) rather than hitting EOF, so the
+        # connection stays open the way a real signal-cli's would.
+        exec ${pkgs.socat}/bin/socat UNIX-LISTEN:/run/signal-cli/fake.sock,fork,mode=0777 EXEC:${pkgs.coreutils}/bin/cat
       '';
     };
   };
