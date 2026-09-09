@@ -13,7 +13,13 @@
       packages = forAll (pkgs: {
         default = pkgs.rustPlatform.buildRustPackage {
           pname = "signal-seerr";
-          version = "0.1.0";
+          # Read out of Cargo.toml rather than written down a second time.
+          # The 0.1.1 bump changed Cargo.toml alone and this line kept
+          # saying 0.1.0, so the store path disagreed with the crate about
+          # what it was -- and nothing compared the two, because nothing
+          # could. A derived value cannot drift; a guard against drift can
+          # itself be forgotten.
+          version = (nixpkgs.lib.importTOML ./Cargo.toml).package.version;
           src = self;
           # No hash to keep in step with the sources: the lock file IS the input.
           cargoLock.lockFile = ./Cargo.lock;
