@@ -16,7 +16,7 @@ bot:  1. Blade Runner 2049 (2017) — Movie
       Reply with the number. "m" shows more.
 you:  1
 bot:  Blade Runner 2049 (2017) is on the list. I'll let you know once it's here.
-      Wrong one? /weg 1849 takes it off again.
+      Wrong one? /withdraw 1849 takes it off again.
 …later…
 bot:  "Blade Runner 2049 (2017)" is here.
       https://jellyfin.example.invalid
