@@ -81,7 +81,11 @@ async fn main() -> Result<()> {
     // right; waiting for ever is not. An unbounded wait inside a container
     // boot is exactly how a guest never finishes booting and a deploy
     // aborts.
-    wait_for_socket(&config.signal_socket, std::time::Duration::from_secs(60)).await?;
+    // 20s, not 60s: chosen together with the unit's restart limit
+    // (nix/module.nix) so a persistently failing start actually reaches
+    // that limit inside its window rather than staying just under it. If
+    // the socket is not there after 20s, waiting another 40 rarely helps.
+    wait_for_socket(&config.signal_socket, std::time::Duration::from_secs(20)).await?;
 
     let (signal, mut incoming) =
         SignalClient::connect(&config.signal_socket, &config.signal_account).await?;
