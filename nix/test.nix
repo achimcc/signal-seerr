@@ -71,11 +71,18 @@ pkgs.testers.runNixOSTest {
     machine.wait_for_unit("signal-seerr.service")
     # Measured at the result, not at the exit code: the listener must answer.
     machine.wait_for_open_port(8080)
+    # Both assertions compare the status code itself instead of piping into
+    # "grep -q". The test driver runs each command under "set -o pipefail",
+    # and "grep -q" exits at its first match, closing the pipe; the writer
+    # ahead of it can then take a SIGPIPE and turn a matched status code into
+    # a failed test. Whether that fires depends on whether the response fits
+    # a pipe buffer, not on whether the code is right -- a failure that comes
+    # and goes with the size of the payload.
     machine.succeed(
-        "curl -sf -o /dev/null -w '%{http_code}' -X POST "
+        "test $(curl -s -o /dev/null -w '%{http_code}' -X POST "
         "-H 'X-Webhook-Token: h' -H 'content-type: application/json' "
         "-d '{\"notification_type\":\"TEST_NOTIFICATION\"}' "
-        "http://127.0.0.1:8080/seerr | grep -q 200"
+        "http://127.0.0.1:8080/seerr) = 200"
     )
     # A wrong token must be refused, and that is the assertion that can go red.
     machine.succeed(
