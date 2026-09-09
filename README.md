@@ -98,8 +98,8 @@ Profile → Username.
 Copy `config.example.toml` and fill it in:
 
 ```toml
-signal_socket  = "/run/signal-cli/socket"
-signal_account = "+49301234567"
+signal_socket       = "/run/signal-cli/socket"
+signal_account_file = "/run/credentials/signal-seerr.service/signal-account"
 
 authentik_url        = "http://authentik.example.invalid:9000"
 authentik_token_file = "/run/credentials/signal-seerr.service/authentik-token"
@@ -123,10 +123,17 @@ operator_name = "the operator"
 pointing at a file that holds it — a systemd credential, a Docker secret, or
 just a file with tight permissions; signal-seerr only ever reads it, trimmed
 of surrounding whitespace. Run it under whatever process supervisor you use
-and give it those three files plus the config.
+and give it those four files plus the config.
 
 A field-by-field note on what is not obvious from the name:
 
+- `signal_account_file` holds the bot's own registered phone number, not a
+  username — the same value you passed to `signal-cli -a` in the manual
+  steps above. It is a `*_file` option, not a plain string, because the
+  whole point of the username step is to keep that number away from the
+  people the bot talks to; putting it in `settings` would leave it sitting
+  in a world-readable Nix store path (and in the config's own git history)
+  instead.
 - `authentik_url` / `seerr_url` need an explicit scheme (`http://` or
   `https://`) — a bare host:port is rejected at startup, not at the first
   request.

@@ -15,7 +15,7 @@ pkgs.testers.runNixOSTest {
         # (config.example.toml's /run/signal-cli/socket), owned by
         # signal-cli's own unit, not this one.
         signal_socket = "/run/signal-cli/fake.sock";
-        signal_account = "+490000";
+        signal_account_file = "/run/secrets/account";
         authentik_url = "http://127.0.0.1:9";
         authentik_token_file = "/run/secrets/tok";
         seerr_url = "http://127.0.0.1:9";
@@ -38,6 +38,7 @@ pkgs.testers.runNixOSTest {
       script = ''
         mkdir -p /run/signal-cli /run/secrets
         printf t > /run/secrets/tok; printf k > /run/secrets/key; printf h > /run/secrets/hook
+        printf '+490000' > /run/secrets/account
         # mode=0777: this script runs as root (no User= set) and socat's
         # default is 0755, owner root. signal-seerr runs under DynamicUser,
         # an ephemeral uid/gid unrelated to root's -- connecting to a UNIX

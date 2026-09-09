@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     pub signal_socket: PathBuf,
-    pub signal_account: String,
+    pub signal_account_file: PathBuf,
     pub authentik_url: String,
     pub authentik_token_file: PathBuf,
     pub seerr_url: String,
@@ -54,7 +54,7 @@ impl Config {
     pub fn for_test() -> Config {
         Config {
             signal_socket: "/tmp/socket".into(),
-            signal_account: "+490000".into(),
+            signal_account_file: "/dev/null".into(),
             authentik_url: "http://localhost:9000".into(),
             authentik_token_file: "/dev/null".into(),
             seerr_url: "http://localhost:5055".into(),
@@ -98,6 +98,7 @@ fn plain_http_fields(cfg: &Config) -> Vec<(&'static str, &str)> {
 
 #[derive(Debug)]
 pub struct Secrets {
+    pub signal_account: Secret,
     pub authentik_token: Secret,
     pub seerr_key: Secret,
     pub webhook_token: Secret,
@@ -106,6 +107,7 @@ pub struct Secrets {
 impl Secrets {
     pub fn read(config: &Config) -> Result<Secrets> {
         Ok(Secrets {
+            signal_account: read_one(&config.signal_account_file)?,
             authentik_token: read_one(&config.authentik_token_file)?,
             seerr_key: read_one(&config.seerr_key_file)?,
             webhook_token: read_one(&config.webhook_token_file)?,
@@ -238,16 +240,19 @@ mod tests {
         // A credential file written by systemd ends in a newline more often
         // than not; a trailing \n in an API key yields a 401 that looks like a
         // wrong key.
+        let account = write(&dir, "account", "+491234567890\n");
         let tok = write(&dir, "tok", "abc123\n");
         let key = write(&dir, "key", "def456");
         let hook = write(&dir, "hook", "ghi789\n\n");
         let cfg = Config {
+            signal_account_file: account,
             authentik_token_file: tok,
             seerr_key_file: key,
             webhook_token_file: hook,
             ..Config::for_test()
         };
         let s = Secrets::read(&cfg).unwrap();
+        assert_eq!(s.signal_account.expose(), "+491234567890");
         assert_eq!(s.authentik_token.expose(), "abc123");
         assert_eq!(s.seerr_key.expose(), "def456");
         assert_eq!(s.webhook_token.expose(), "ghi789");
@@ -261,5 +266,20 @@ mod tests {
         };
         let err = Secrets::read(&cfg).unwrap_err().to_string();
         assert!(err.contains("/nonexistent/token"), "got: {err}");
+    }
+
+    #[test]
+    fn a_missing_signal_account_file_is_an_error_naming_the_path() {
+        // The phone number moved behind a *_file option specifically so it
+        // never sits in `settings` in plain text (see the module doc); a
+        // config that still names a file that is not there must fail
+        // loudly at startup, the same way the other three secrets do, not
+        // fall back to some empty or guessed value.
+        let cfg = Config {
+            signal_account_file: "/nonexistent/signal-account".into(),
+            ..Config::for_test()
+        };
+        let err = Secrets::read(&cfg).unwrap_err().to_string();
+        assert!(err.contains("/nonexistent/signal-account"), "got: {err}");
     }
 }

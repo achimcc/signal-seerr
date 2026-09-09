@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
     wait_for_socket(&config.signal_socket, std::time::Duration::from_secs(20)).await?;
 
     let (signal, mut incoming) =
-        SignalClient::connect(&config.signal_socket, &config.signal_account).await?;
+        SignalClient::connect(&config.signal_socket, secrets.signal_account.expose()).await?;
 
     let state = Arc::new(RwLock::new(State::load(&config.state_file)?));
     let seerr = Arc::new(SeerrClient::new(&config.seerr_url, secrets.seerr_key));
