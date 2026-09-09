@@ -71,7 +71,7 @@ impl Config {
     }
 }
 
-/// A missing scheme is a misconfiguration, not a choice: `10.0.20.10:9000`
+/// A missing scheme is a misconfiguration, not a choice: `192.0.2.10:9000`
 /// would otherwise reach reqwest in a shape nobody meant to send. Only the
 /// two endpoints this process actually connects to are checked --
 /// jellyfin_url never leaves a message to a person.
@@ -146,7 +146,7 @@ mod tests {
         let body = with_field_value(
             include_str!("../config.example.toml"),
             "seerr_url",
-            "10.0.50.10:5055",
+            "192.0.2.20:5055",
         );
         let p = write(&dir, "c.toml", &body);
         let err = Config::load(&p).unwrap_err().to_string();
@@ -167,8 +167,8 @@ mod tests {
     #[test]
     fn plain_http_fields_names_every_unencrypted_endpoint() {
         let cfg = Config {
-            authentik_url: "http://10.0.20.10:9000".into(),
-            seerr_url: "https://10.0.50.10:5055".into(),
+            authentik_url: "http://192.0.2.10:9000".into(),
+            seerr_url: "https://192.0.2.20:5055".into(),
             ..Config::for_test()
         };
         let flagged: Vec<_> = plain_http_fields(&cfg)

@@ -124,7 +124,7 @@ impl SignalClient {
         answer.map_err(|e| anyhow!("signal-cli rejected {method}: {e}"))
     }
 
-    /// Resolves a Signal username ("achim.42") to the account id behind it.
+    /// Resolves a Signal username ("alice.42") to the account id behind it.
     /// `Ok(None)` means the name does not exist -- a typo, not a failure.
     pub async fn resolve_username(&self, username: &str) -> Result<Option<Aci>> {
         let answer = self
@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn a_known_username_yields_its_aci() {
         let answer = serde_json::json!([
-            { "recipient": "u:achim.42", "number": null, "uuid": "aaaa-bbbb", "isRegistered": true }
+            { "recipient": "u:alice.42", "number": null, "uuid": "aaaa-bbbb", "isRegistered": true }
         ]);
         assert_eq!(aci_from_user_status(&answer), Some(Aci("aaaa-bbbb".into())));
     }

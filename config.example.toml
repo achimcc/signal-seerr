@@ -2,10 +2,10 @@
 signal_socket  = "/run/signal-cli/socket"
 signal_account = "+49301234567"
 
-authentik_url        = "http://10.0.20.10:9000"
+authentik_url        = "http://192.0.2.10:9000"
 authentik_token_file = "/run/credentials/signal-seerr.service/authentik-token"
 
-seerr_url      = "http://10.0.50.10:5055"
+seerr_url      = "http://192.0.2.20:5055"
 seerr_key_file = "/run/credentials/signal-seerr.service/seerr-key"
 
 webhook_listen     = "0.0.0.0:8080"
