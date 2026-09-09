@@ -1,6 +1,6 @@
 [package]
 name = "signal-seerr"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "AGPL-3.0-only"
 description = "Request movies and series through Seerr from a Signal chat"
@@ -10,6 +10,7 @@ repository = "https://github.com/achimcc/signal-seerr"
 anyhow = "1.0.104"
 async-trait = "0.1.92"
 axum = "0.8.9"
+percent-encoding = "2.3.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "query"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

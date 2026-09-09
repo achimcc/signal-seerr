@@ -2,6 +2,7 @@ use crate::model::{Hit, MediaKind, Pending, PendingState, Seasons, SeerrUserId};
 use crate::secret::Secret;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 
 /// Seerr's MediaStatus, from dist/constants/media.js. 4 = PARTIALLY_AVAILABLE,
 /// 5 = AVAILABLE; 2 (PENDING) and 3 (PROCESSING) mean somebody already asked.
@@ -97,9 +98,15 @@ impl SeerrClient {
 #[async_trait]
 impl Requests for SeerrClient {
     async fn search(&self, query: &str, kind: Option<MediaKind>, page: u32) -> Result<Vec<Hit>> {
+        // Built by hand rather than with `.query()`: that serialises
+        // form-urlencoded, so a space becomes `+`, and Seerr's OpenAPI
+        // validator refuses a `query` carrying a reserved character with
+        // 400 ("Parameter 'query' must be url encoded"). Percent-encoding
+        // is what it accepts. Only this call takes text a person typed --
+        // the `take=` parameters elsewhere have nothing to encode.
+        let encoded = utf8_percent_encode(query, NON_ALPHANUMERIC);
         let response = self
-            .get("/api/v1/search")
-            .query(&[("query", query), ("page", &page.to_string())])
+            .get(&format!("/api/v1/search?query={encoded}&page={page}"))
             .send()
             .await?;
         let body = self.json(response).await?;

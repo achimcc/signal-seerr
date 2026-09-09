@@ -295,3 +295,34 @@ async fn requester_of_ignores_the_editable_display_name() {
     let who = client(&server).requester_of(1850).await.unwrap();
     assert_eq!(who, None, "must not fall back to the editable display name");
 }
+
+/// Seerr's OpenAPI validator rejects a `query` whose value carries a
+/// reserved character, and `+` is one: a form-urlencoded space (what
+/// `reqwest`'s `.query()` produces) gets a 400, a percent-encoded one
+/// (`%20`) gets a 200. Measured against the running instance on
+/// 2026-09-09 -- "Der Vorleser" answered 400, "Der%20Vorleser" 200, which
+/// meant every multi-word title failed and every single-word one worked.
+///
+/// The matcher reads the RAW query string on purpose. `query_param` in the
+/// tests above decodes first, so `+` and `%20` look identical to it -- which
+/// is exactly why none of them saw this.
+#[tokio::test]
+async fn a_space_in_the_query_is_percent_encoded_not_a_plus() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/search"))
+        .and(|request: &wiremock::Request| {
+            let raw = request.url.query().unwrap_or_default();
+            raw.contains("query=blade%20runner") && !raw.contains('+')
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "page": 1, "totalPages": 1, "totalResults": 0, "results": []
+        })))
+        .mount(&server)
+        .await;
+
+    client(&server)
+        .search("blade runner", None, 1)
+        .await
+        .expect("a space must travel as %20 -- Seerr answers 400 to a +");
+}
