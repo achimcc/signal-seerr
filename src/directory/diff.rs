@@ -45,6 +45,17 @@ pub enum Change {
     /// welcome never went out -- a prior send failed. Retry it; nothing else
     /// about the entry changes.
     Greet { username: String },
+    /// The name is unchanged, but the groups or the language behind it are
+    /// not. Without this the stored copy froze at the moment the mapping was
+    /// created: somebody dropped from a group kept the rights it carried, and
+    /// the bot answered in a language the person had since changed. Audit
+    /// finding B43a (2026-09-20) -- measured against Authentik: 13 groups
+    /// stored against 20 live, frozen since the entry was written.
+    Updated {
+        username: String,
+        groups: Vec<String>,
+        locale: String,
+    },
 }
 
 pub fn plan(state: &State, users: &[AuthentikUser]) -> Vec<Change> {
@@ -73,6 +84,18 @@ pub fn plan(state: &State, users: &[AuthentikUser]) -> Vec<Change> {
         let existing = state.by_user(&user.username);
         if let Some(e) = existing {
             if e.signal_username.eq_ignore_ascii_case(wanted) {
+                // The name is the same -- but what hangs off it may not be.
+                // Compared before the greeting so a retry sends in the
+                // language that is current now.
+                if e.groups != user.groups
+                    || e.locale != crate::i18n::Locale::from_authentik(&user.locale)
+                {
+                    changes.push(Change::Updated {
+                        username: user.username.clone(),
+                        groups: user.groups.clone(),
+                        locale: user.locale.clone(),
+                    });
+                }
                 if !e.greeted {
                     changes.push(Change::Greet {
                         username: user.username.clone(),
@@ -285,5 +308,67 @@ mod tests {
     fn an_empty_field_counts_as_no_name() {
         let state = State::default();
         assert!(plan(&state, &[user("robert", Some("   "))]).is_empty());
+    }
+
+    /// Audit finding B43a: the stored copy of groups and language used to
+    /// freeze at the moment the mapping was created. Taking somebody out of a
+    /// group in Authentik reached the bot never.
+    #[test]
+    fn losing_a_group_updates_the_stored_entry() {
+        let mut state = State::default();
+        state.upsert(crate::state::Entry {
+            authentik_username: "mara".into(),
+            signal_username: "mara.s".into(),
+            aci: Aci("aci-1".into()),
+            greeted: true,
+            locale: Locale::De,
+            groups: vec!["Medien".into(), "Fotos".into()],
+        });
+
+        let got = plan(
+            &state,
+            &[AuthentikUser {
+                username: "mara".into(),
+                signal_username: Some("mara.s".into()),
+                locale: "de".into(),
+                groups: vec!["Fotos".into()],
+            }],
+        );
+
+        assert_eq!(
+            got,
+            vec![Change::Updated {
+                username: "mara".into(),
+                groups: vec!["Fotos".into()],
+                locale: "de".into(),
+            }]
+        );
+    }
+
+    /// The other direction, and it is the one that keeps the change quiet:
+    /// nothing moved, so nothing is planned.
+    #[test]
+    fn unchanged_groups_plan_nothing() {
+        let mut state = State::default();
+        state.upsert(crate::state::Entry {
+            authentik_username: "mara".into(),
+            signal_username: "mara.s".into(),
+            aci: Aci("aci-1".into()),
+            greeted: true,
+            locale: Locale::De,
+            groups: vec!["Medien".into()],
+        });
+
+        let got = plan(
+            &state,
+            &[AuthentikUser {
+                username: "mara".into(),
+                signal_username: Some("mara.s".into()),
+                locale: "de".into(),
+                groups: vec!["Medien".into()],
+            }],
+        );
+
+        assert!(got.is_empty(), "planned {got:?}");
     }
 }

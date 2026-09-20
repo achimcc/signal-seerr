@@ -35,6 +35,10 @@ pub struct FakeSeerr {
 
 #[async_trait::async_trait]
 impl Requests for FakeSeerr {
+        async fn title_of(&self, _request_id: i64) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
+
     async fn search(
         &self,
         q: &str,
@@ -504,6 +508,10 @@ async fn status_lists_what_is_still_on_its_way() {
     struct WithPending;
     #[async_trait::async_trait]
     impl Requests for WithPending {
+        async fn title_of(&self, _request_id: i64) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
+
         async fn search(
             &self,
             _q: &str,
@@ -586,6 +594,10 @@ async fn weg_on_somebody_elses_request_reports_it_as_not_yours() {
     struct Refuses;
     #[async_trait::async_trait]
     impl Requests for Refuses {
+        async fn title_of(&self, _request_id: i64) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
+
         async fn search(
             &self,
             _q: &str,

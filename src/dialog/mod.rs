@@ -776,6 +776,10 @@ mod tests {
         async fn withdraw(&self, _id: i64, _u: SeerrUserId) -> anyhow::Result<()> {
             Ok(())
         }
+        async fn title_of(&self, _id: i64) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
+
         async fn requester_of(&self, _id: i64) -> anyhow::Result<Option<String>> {
             Ok(None)
         }

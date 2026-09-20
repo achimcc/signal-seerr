@@ -153,6 +153,22 @@ pub async fn apply<F, Fut>(
                     }
                 }
             }
+            Change::Updated {
+                username,
+                groups,
+                locale,
+            } => {
+                // In place: the mapping, the ACI and `greeted` stay as they
+                // are -- this is not a new person, only new rights and a new
+                // language. Nothing is sent; a group change is not news the
+                // person needs in a chat.
+                if let Some(mut entry) = state.by_user(&username).cloned() {
+                    entry.groups = groups;
+                    entry.locale = Locale::from_authentik(&locale);
+                    state.upsert(entry);
+                    tracing::info!(username, "groups or language updated");
+                }
+            }
             Change::Greet { username } => {
                 // plan() only emits this when the entry already exists with
                 // a matching name, so the lookup below should always

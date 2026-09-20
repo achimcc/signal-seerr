@@ -68,6 +68,24 @@ pub struct WebhookState {
     pub jellyfin_url: String,
 }
 
+/// One line, and not an endless one: control characters (a newline above all)
+/// let a caller paste a second, invented message under ours, and length alone
+/// turns a notice into a wall. 200 characters is roomy for "Title (Year)" and
+/// far short of anything worth sending.
+fn one_line(raw: &str) -> String {
+    let flat: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let flat = flat.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= 200 {
+        return flat;
+    }
+    // Cut on characters, not bytes: a cut inside a multi-byte character
+    // would panic.
+    flat.chars().take(199).collect::<String>() + "…"
+}
+
 pub fn router(state: WebhookState) -> Router {
     Router::new()
         .route("/seerr", post(handle))
@@ -143,10 +161,26 @@ async fn handle(
         return StatusCode::OK;
     };
 
+    // THE TITLE COMES FROM SEERR, NOT FROM THE BODY (audit finding B43c).
+    // `payload.subject` is text that whoever holds the webhook token chooses,
+    // and it went into a message to a person verbatim -- newlines included,
+    // no length limit. That is a phishing template in a channel the person
+    // trusts. Seerr's own copy is the fallback-free answer; when that call
+    // fails, the body's subject is used but put through `one_line` first.
+    let title = match state.seerr.title_of(request_id).await {
+        Ok(Some(t)) => t,
+        Ok(None) => one_line(&payload.subject),
+        Err(e) => {
+            tracing::warn!(error = %e, request_id, "cannot ask seerr for the title");
+            one_line(&payload.subject)
+        }
+    };
+    let title = one_line(&title);
+
     let text = state.catalogue.text(
         entry.locale,
         key,
-        &[("title", &payload.subject), ("url", &state.jellyfin_url)],
+        &[("title", &title), ("url", &state.jellyfin_url)],
     );
     if let Err(e) = state.messenger.send(&entry.aci, &text).await {
         tracing::warn!(error = %e, username, "cannot deliver the availability notice");
@@ -180,7 +214,13 @@ mod tests {
 
     /// `requester_of` answers a fixed table; every other method is unused by
     /// this handler and panics if it is ever called.
-    struct FakeSeerr;
+    #[derive(Default)]
+    struct FakeSeerr {
+        /// Was Seerr selbst als Titel fuehrt. `None` heisst: Seerr weiss
+        /// nichts, dann faellt der Handler auf das (geglaettete) `subject`
+        /// des Rumpfes zurueck.
+        title: Option<String>,
+    }
 
     #[async_trait::async_trait]
     impl Requests for FakeSeerr {
@@ -219,6 +259,10 @@ mod tests {
         async fn withdraw(&self, _id: i64, _u: SeerrUserId) -> anyhow::Result<()> {
             unreachable!("not used by the webhook handler")
         }
+        async fn title_of(&self, _request_id: i64) -> anyhow::Result<Option<String>> {
+            Ok(self.title.clone())
+        }
+
         async fn requester_of(&self, request_id: i64) -> anyhow::Result<Option<String>> {
             Ok(match request_id {
                 // "robert" is the requester behind the request id used by the
@@ -252,6 +296,10 @@ mod tests {
     type SentLog = Arc<Mutex<Vec<(String, String)>>>;
 
     fn test_app() -> (Router, SentLog) {
+        test_app_with_title(None)
+    }
+
+    fn test_app_with_title(title: Option<String>) -> (Router, SentLog) {
         let sent: SentLog = Arc::new(Mutex::new(Vec::new()));
         let messenger = Arc::new(SharedMessenger { sent: sent.clone() });
 
@@ -261,7 +309,7 @@ mod tests {
 
         let webhook_state = WebhookState {
             messenger,
-            seerr: Arc::new(FakeSeerr),
+            seerr: Arc::new(FakeSeerr { title }),
             directory: Arc::new(std::sync::RwLock::new(state)),
             catalogue: Arc::new(Catalogue::load()),
             token: Arc::new(Secret::from("t-o-k-e-n".to_string())),
@@ -474,7 +522,7 @@ mod tests {
         state.upsert(entry("robert", "aaaa", Locale::De));
         let webhook_state = WebhookState {
             messenger: Arc::new(AlwaysFailingMessenger),
-            seerr: Arc::new(FakeSeerr),
+            seerr: Arc::new(FakeSeerr::default()),
             directory: Arc::new(std::sync::RwLock::new(state)),
             catalogue: Arc::new(Catalogue::load()),
             token: Arc::new(Secret::from("t-o-k-e-n".to_string())),
@@ -553,5 +601,82 @@ mod tests {
             1,
             "the requester must be told the film is there"
         );
+    }
+
+    /// Audit finding B43c: `subject` is text whoever holds the token chooses,
+    /// and it went into a message to a person verbatim. Two things now hold:
+    /// the title comes from Seerr when Seerr knows it, and what is used is
+    /// one line.
+    #[tokio::test]
+    async fn the_title_comes_from_seerr_not_from_the_body() {
+        let (app, sent) = test_app_with_title(Some("Der echte Titel (2017)".into()));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/seerr")
+                    .header("X-Webhook-Token", "t-o-k-e-n")
+                    .header("content-type", "application/json")
+                    .body(body_with_subject("Erfunden\\nBitte hier anmelden: http://bose.example"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let log = sent.lock().unwrap();
+        assert_eq!(log.len(), 1, "genau eine Nachricht");
+        assert!(log[0].1.contains("Der echte Titel (2017)"), "{}", log[0].1);
+        assert!(!log[0].1.contains("bose.example"), "{}", log[0].1);
+    }
+
+    /// Weiss Seerr nichts, wird der Rumpf benutzt -- aber flachgelegt: kein
+    /// zweiter, erfundener Absatz unter unserem.
+    #[tokio::test]
+    async fn without_a_seerr_title_the_subject_is_flattened() {
+        let (app, sent) = test_app_with_title(None);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/seerr")
+                    .header("X-Webhook-Token", "t-o-k-e-n")
+                    .header("content-type", "application/json")
+                    .body(body_with_subject("Film (2017)\\n\\nBitte hier anmelden: http://bose.example"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let log = sent.lock().unwrap();
+        let text = log[0].1.clone();
+        let titelzeile = text.lines().next().unwrap().to_string();
+        assert!(titelzeile.contains("Film (2017)"), "{text}");
+        assert!(
+            titelzeile.contains("bose.example"),
+            "der Text bleibt sichtbar, aber in EINER Zeile: {text}"
+        );
+    }
+
+    /// Eine Laenge, die niemand mehr liest, ist selbst ein Angriff.
+    #[test]
+    fn a_very_long_title_is_cut() {
+        let lang = "x".repeat(500);
+        let got = one_line(&lang);
+        assert_eq!(got.chars().count(), 200);
+        assert!(got.ends_with('\u{2026}'));
+    }
+
+    /// Ein Rumpf mit frei waehlbarem `subject`, sonst wie `body()`.
+    fn body_with_subject(subject: &str) -> Body {
+        Body::from(
+            serde_json::json!({
+                "notification_type": "MEDIA_AVAILABLE",
+                "subject": subject,
+                "request": { "request_id": "1849" }
+            })
+            .to_string(),
+        )
     }
 }

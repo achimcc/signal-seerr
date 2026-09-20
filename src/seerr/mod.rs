@@ -30,6 +30,11 @@ pub trait Requests: Send + Sync {
     /// Who asked for this request — the Authentik username, read from Seerr
     /// rather than taken from a webhook payload. See the note in Task 13.
     async fn requester_of(&self, request_id: i64) -> Result<Option<String>>;
+
+    /// The title Seerr itself holds for a request. The webhook body carries a
+    /// `subject`, but that is text an authenticated caller chooses; it lands
+    /// in a message to a person. Audit finding B43c (2026-09-20).
+    async fn title_of(&self, request_id: i64) -> Result<Option<String>>;
 }
 
 /// Lets an `Arc<SeerrClient>` satisfy `R: Requests` directly, so the same
@@ -68,6 +73,9 @@ impl<T: Requests + ?Sized> Requests for std::sync::Arc<T> {
     }
     async fn requester_of(&self, request_id: i64) -> Result<Option<String>> {
         (**self).requester_of(request_id).await
+    }
+    async fn title_of(&self, request_id: i64) -> Result<Option<String>> {
+        (**self).title_of(request_id).await
     }
 }
 
@@ -364,6 +372,40 @@ impl Requests for SeerrClient {
             .map(|n| n.to_string()))
     }
 
+    /// TWO CALLS, AND THE FIRST ONE ALONE DOES NOT DO IT: the request object
+    /// carries `media.tmdbId` and `media.mediaType`, but NO title -- measured
+    /// at the running instance on 2026-09-20. The title lives behind
+    /// `/api/v1/movie/{tmdb}` or `/api/v1/tv/{tmdb}`, where a movie calls it
+    /// `title` and a series `name`.
+    async fn title_of(&self, request_id: i64) -> Result<Option<String>> {
+        let response = self
+            .get(&format!("/api/v1/request/{request_id}"))
+            .send()
+            .await?;
+        let body = self.json(response).await?;
+        let media = body.get("media");
+        let tmdb = media.and_then(|m| m.get("tmdbId")).and_then(|v| v.as_i64());
+        let art = media
+            .and_then(|m| m.get("mediaType"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("movie");
+        let Some(tmdb) = tmdb else {
+            return Ok(None);
+        };
+        let pfad = if art == "tv" {
+            format!("/api/v1/tv/{tmdb}")
+        } else {
+            format!("/api/v1/movie/{tmdb}")
+        };
+        let detail = self.json(self.get(&pfad).send().await?).await?;
+        Ok(detail
+            .get("title")
+            .or_else(|| detail.get("name"))
+            .and_then(|t| t.as_str())
+            .filter(|t| !t.trim().is_empty())
+            .map(|t| t.to_string()))
+    }
+
     async fn withdraw(&self, id: i64, as_user: SeerrUserId) -> Result<()> {
         // The API key is an administrator, so Seerr would delete anybody's
         // request. The owner check has to happen here.
@@ -447,6 +489,10 @@ mod arc_requests_tests {
         async fn withdraw(&self, _id: i64, _as_user: SeerrUserId) -> Result<()> {
             Ok(())
         }
+        async fn title_of(&self, _request_id: i64) -> Result<Option<String>> {
+            Ok(None)
+        }
+
         async fn requester_of(&self, _request_id: i64) -> Result<Option<String>> {
             Ok(Some("canned-requester".to_string()))
         }
