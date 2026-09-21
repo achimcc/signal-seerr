@@ -41,3 +41,40 @@ operator_name = "the operator"
 #   "Dual Language, then German (1080p)",
 #   "Rarity, original language (SD too)",
 # ]
+
+# Read-only Radarr/Sonarr access for /status and stall notices. Optional --
+# without this section the bot behaves exactly as it did before insight
+# existed.
+# [insight]
+# radarr_url      = "https://radarr.example.invalid"
+# radarr_key_file = "/run/credentials/signal-seerr.service/radarr-key"
+#
+# # Sonarr access is optional on top of Radarr's. sonarr_url and
+# # sonarr_key_file are a pair -- one without the other is a load error.
+# sonarr_url      = "https://sonarr.example.invalid"
+# sonarr_key_file = "/run/credentials/signal-seerr.service/sonarr-key"
+#
+# # How often Radarr/Sonarr are polled for status changes, in seconds.
+# poll_seconds = 600
+#
+# # After this many hours without progress, a request counts as stalled.
+# stall_after_hours = 24
+#
+# # reason_search triggers ONE interactive indexer search per stalled
+# # request -- never from /status. Off by default: an interactive search at
+# # somebody else's indexers is something an operator switches on
+# # explicitly.
+# reason_search = false
+#
+# # A ceiling on how many of those searches run per day, once reason_search
+# # is on.
+# max_reason_searches_per_day = 5
+#
+# # Where "already told you about this" state is kept, so a stall notice is
+# # not repeated every poll.
+# notices_file = "/var/lib/signal-seerr/notices.json"
+#
+# # Profile NAME -> the languages that profile REQUIRES. Only listed
+# # profiles ever get the "only in <language>" reason.
+# [insight.profile_languages]
+# "Dual Language, then German (1080p)" = ["German", "English"]
