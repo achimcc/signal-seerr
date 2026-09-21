@@ -63,6 +63,12 @@ gets refused with, not just that the server answered.
   wording change.** Prefer asserting structure (a placeholder got filled, a
   status code, a set of keys) over the literal sentence, except where the
   literal sentence is the thing under test.
+- **A test for a wire format reads `tests/fixtures/` — it never builds the
+  body itself.** Seerr sends `request_id` as a *string* while every test in
+  this repository built it as a number, and `media.title` is never sent by
+  `/user/{id}/requests` at all — twice, every test agreed with every other
+  test and none of them with reality. `tests/fixtures/README.md` says what
+  each recording is and what was trimmed out of it before it got here.
 - **Versions are not guessed.** `cargo add <crate>` decides them,
   `Cargo.lock` holds them, and the Nix package reads
   `cargoLock.lockFile` — never a hash pinned by hand.
@@ -79,6 +85,11 @@ gets refused with, not just that the server answered.
 | `src/seerr/` | the Seerr REST client: search, request, withdraw, look up a requester |
 | `src/directory/` | the Authentik reconciler — diffing the directory against known state, four transitions (`diff.rs`) |
 | `src/dialog/` | the conversation state machine: search results, season questions, commands |
+| `src/dialog/status.rs` | one `WishState` put into words — shared by `/status` and the watcher, so the two cannot drift |
+| `src/arr/` | the read-only Radarr/Sonarr client, behind two traits: `Insight` (reading) and `ReleaseSearch` (the interactive search, handed to `watch` alone) |
+| `src/insight.rs` | `classify` and `reason_from` — pure functions from a wish plus evidence to a `WishState` |
+| `src/notices.rs` | the on-disk record of what has already been said about which wish; an unreadable file is an error, never an empty record |
+| `src/watch.rs` | the loop that speaks up unasked: once per wish and kind of problem, with a budgeted release search |
 | `src/webhook.rs` | the Seerr webhook listener — `MEDIA_AVAILABLE` / `MEDIA_FAILED` back to the requester |
 | `src/state.rs` | the on-disk mapping between Signal accounts and Authentik usernames |
 | `src/i18n.rs`, `i18n/` | locale selection and the message catalogues |

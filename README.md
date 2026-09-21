@@ -208,6 +208,132 @@ parsed. Enable at least the "Media Available" and "Media Failed"
 notification types; anything else Seerr sends is accepted and dropped
 without an error, so enabling more does no harm.
 
+## Status and stalled requests
+
+A wish that gets stuck used to be silent for ever: somebody asked, was told
+"it's on the list", and never heard about it again. `/status` said *being
+fetched* about everything — the same sentence for a film that is downloading
+at 80 %, one that hasn't come out yet, and one that nobody anywhere has in a
+version this household accepts.
+
+The optional `[insight]` section gives the bot read-only access to Radarr and
+Sonarr, and with it two things:
+
+**`/status` says what is actually the case.** Ten states, each backed by
+something measured rather than assumed — *here*, *part of it is here, the
+rest is still coming*, *downloading, 43 %*, *downloaded, but stuck on the
+last step*, *not out for home viewing yet (expected from …)*, *one attempt
+failed, I'm still looking*, *still looking, nothing suitable so far*, *so far
+only available in Portuguese*, *I couldn't put it on the list*, and plain
+*waiting* where nothing was measured at all. That last one matters: without
+`[insight]`, and for anything the bot has no evidence about, it says
+*waiting* instead of claiming a search nobody made.
+
+**The bot speaks up unasked when a wish is stuck.** Once per request and per
+kind of problem — never twice for the same thing, and never more than one
+unasked message about the same request per day — after `stall_after_hours`
+have passed with no progress. Three kinds of problem count: nothing suitable
+found, a failed download attempt, and a download that finished but is stuck
+on the import. What has already been said is kept in `notices_file`, and a
+reason an indexer search turned up is written there *before* anybody is told
+about it, so a message that never got sent never costs a second search.
+
+```toml
+[insight]
+radarr_url      = "http://192.0.2.30:7878"
+radarr_key_file = "/run/credentials/signal-seerr.service/radarr-key"
+
+# Optional on top of Radarr's, and a pair: one of the two without the other
+# is a load error, not a half-configured Sonarr that fails later.
+sonarr_url      = "http://192.0.2.40:8989"
+sonarr_key_file = "/run/credentials/signal-seerr.service/sonarr-key"
+
+poll_seconds      = 600   # how often the open wishes are looked at
+stall_after_hours = 24    # no progress for this long = stuck
+
+reason_search               = false
+max_reason_searches_per_day = 5
+
+notices_file = "/var/lib/signal-seerr/notices.json"
+
+# Profile NAME -> the languages that profile REQUIRES. Only listed profiles
+# ever get the "so far only available in <language>" reason.
+[insight.profile_languages]
+"Dual Language, then German (1080p)" = ["German", "English"]
+```
+
+Leave the whole section out and the bot behaves exactly as it did before any
+of this existed: no arr client is built, no arr key is read, and nothing ever
+connects to Radarr or Sonarr.
+
+`notices_file` belongs next to `state_file`, in a directory the service may
+write to (`StateDirectory=signal-seerr` covers both on the NixOS module). A
+file that exists but cannot be read or parsed is an **error naming the
+path**, never an empty record — an emptied record would tell everybody about
+every wish all over again. In that case the bot logs it, keeps answering
+`/status`, and simply does not run the unasked loop until somebody has looked
+at the file.
+
+### What `reason_search` costs
+
+Off by default, and that is not timidity. Switched on, it lets the bot run
+**one interactive indexer search per stalled request** — Radarr's
+`/api/v3/release`, which asks every indexer the operator has configured, the
+same thing a human clicking "Interactive Search" triggers. It is budgeted
+twice over: at most one per request, ever, and at most
+`max_reason_searches_per_day` across the whole household per UTC day. It is
+**never** reachable from a chat command; `/status` cannot trigger one, no
+matter who types it. A search that reached the indexers and then failed is
+counted all the same — a budget that only counts successes is no budget.
+
+What it buys is the difference between *still looking, nothing suitable so
+far* and *so far only available in Portuguese* (or *too big*, *too small*,
+*picture quality*). The reason comes from the releases' structured fields
+alone; an indexer's name, a release's name and the operator's own
+custom-format scores are never deserialised, never logged and never sent to
+anybody.
+
+**A series gets no reason search.** Sonarr has no equivalent of Radarr's
+per-movie interactive search here, so a series is judged from its queue and
+its history only: it can be *here*, *part of it is here*, *downloading*,
+*stuck on the last step*, *one attempt failed*, or *waiting* — but never
+"only available in …". That is a limit of what was measured, not a gap
+waiting to be filled with a guess.
+
+### Put a filtering proxy in front of Radarr and Sonarr
+
+**Recommended, and the reason is worth reading before deciding against it: an
+arr API key is full access.** There is no read-only key. The same key that
+answers "what is the state of movie 412" will delete a film and its files,
+rewrite the download clients, and — via Radarr's and Sonarr's *custom
+scripts* — run an arbitrary command on the machine they sit on. Handing that
+to a chat bot is handing it to whatever the chat bot's worst day looks like.
+
+So give the bot a reverse proxy instead of the arr itself, and let through
+`GET`, and only `GET`, on exactly these paths:
+
+| Service | Path |
+|---|---|
+| Radarr | `/api/v3/movie/{id}` |
+| Radarr | `/api/v3/queue` |
+| Radarr | `/api/v3/history/movie` |
+| Radarr | `/api/v3/release` |
+| Sonarr | `/api/v3/queue` |
+| Sonarr | `/api/v3/history/series` |
+
+That is the complete list — the bot calls nothing else, so anything else
+arriving at the proxy is worth a look rather than a rule. `radarr_url` and
+`sonarr_url` may carry a path part (`http://192.0.2.50:7870/radarr`), so one
+proxy can front both.
+
+Leave `/api/v3/release` out of the list if `reason_search` stays off; the bot
+then never asks for it. And note what that endpoint answers with: a release
+list carries indexer URLs, and those URLs carry the operator's passkeys. The
+bot deserialises three fields out of each release (`rejected`, `rejections`,
+`languages`) and nothing else, so a passkey never reaches a log line or a
+message — but it does cross the wire, which is one more reason for the proxy
+to sit between the two rather than the key travelling further than it has to.
+
 ## License
 
 AGPL-3.0-only — see `LICENSE`. Running a modified version of this bot for

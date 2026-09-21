@@ -1,12 +1,16 @@
-use anyhow::Result;
-use signal_seerr::config::{Config, Secrets};
+use anyhow::{Context, Result};
+use signal_seerr::arr::{ArrClient, Insight, ReleaseSearch};
+use signal_seerr::config::{Config, InsightConfig, Secrets};
 use signal_seerr::dialog::Dialog;
 use signal_seerr::directory::{apply, diff::plan, AuthentikClient, Directory, Member};
 use signal_seerr::i18n::Catalogue;
 use signal_seerr::model::Aci;
-use signal_seerr::seerr::SeerrClient;
+use signal_seerr::notices::Notices;
+use signal_seerr::secret::Secret;
+use signal_seerr::seerr::{Requests, SeerrClient};
 use signal_seerr::signal::{Messenger, SignalClient};
 use signal_seerr::state::State;
+use signal_seerr::watch::{WatchSettings, Watcher};
 use signal_seerr::webhook;
 use std::sync::{Arc, RwLock};
 
@@ -62,6 +66,98 @@ impl Directory for SharedDirectory {
     }
 }
 
+/// What the `[insight]` section adds to this process.
+///
+/// `notices` and `watcher` are `None` together, and for one reason: a
+/// notices file that cannot be read must never be replaced by an empty
+/// record -- an emptied record would tell everybody about every wish all
+/// over again. The dialog keeps its `Insight` in that case, so `/status`
+/// still answers truthfully; only the loop that speaks up unasked stays off,
+/// and it stays off until somebody looks at the file.
+///
+/// The default -- all three `None` -- is exactly the behaviour of a config
+/// without an `[insight]` section: no arr client is built, no arr key is
+/// read, and nothing ever connects to Radarr or Sonarr.
+#[derive(Default)]
+struct InsightParts {
+    insight: Option<Arc<dyn Insight>>,
+    notices: Option<Arc<RwLock<Notices>>>,
+    watcher: Option<Watcher>,
+}
+
+/// The watcher's settings from the `[insight]` section.
+///
+/// Pure, and on its own, so the one conversion in the whole wiring that
+/// could be silently wrong -- a count of hours into a `time::Duration` -- is
+/// tested without building an HTTP client or a runtime. Seconds instead of
+/// hours here would make the bot announce every open wish within the minute.
+fn watch_settings(insight: &InsightConfig) -> WatchSettings {
+    WatchSettings {
+        stall_after: time::Duration::hours(insight.stall_after_hours as i64),
+        max_searches_per_day: insight.max_reason_searches_per_day,
+        notices_file: insight.notices_file.clone(),
+        profile_languages: insight.profile_languages.clone(),
+    }
+}
+
+/// Builds the arr client, loads the record, and assembles the watcher --
+/// kept out of `main` so the startup sequence there stays readable.
+///
+/// One `ArrClient` serves both roles: the dialog gets it as `Arc<dyn
+/// Insight>`, which by its very type cannot trigger a search, and the
+/// watcher gets the same connection a second time as `Arc<dyn
+/// ReleaseSearch>` -- but only when the operator switched `reason_search`
+/// on. Off, that cast never happens at all.
+fn insight_parts(
+    insight: &InsightConfig,
+    radarr_key: Secret,
+    sonarr_key: Option<Secret>,
+    seerr: Arc<dyn Requests>,
+    messenger: Arc<dyn Messenger>,
+    directory: Arc<RwLock<State>>,
+    catalogue: Arc<Catalogue>,
+) -> InsightParts {
+    // `zip`, not two separate options: `config.rs` has already rejected a
+    // URL without its key file and vice versa, so either both are here or
+    // neither is.
+    let sonarr = insight.sonarr_url.as_deref().zip(sonarr_key);
+    let arr = Arc::new(ArrClient::new(&insight.radarr_url, radarr_key, sonarr));
+
+    let notices = match Notices::load(&insight.notices_file) {
+        Ok(notices) => Some(Arc::new(RwLock::new(notices))),
+        Err(e) => {
+            // Deliberately NOT `Notices::default()`: see the struct doc.
+            // Loud, naming the path, and the process carries on -- dialog,
+            // webhook and reconciler have nothing to do with this file.
+            tracing::error!(
+                error = %e,
+                path = %insight.notices_file.display(),
+                "cannot read the notices file -- the watch loop stays off and the file is left untouched"
+            );
+            None
+        }
+    };
+
+    let watcher = notices.clone().map(|notices| Watcher {
+        seerr,
+        insight: arr.clone() as Arc<dyn Insight>,
+        search: insight
+            .reason_search
+            .then(|| arr.clone() as Arc<dyn ReleaseSearch>),
+        messenger,
+        directory,
+        notices,
+        catalogue,
+        settings: watch_settings(insight),
+    });
+
+    InsightParts {
+        insight: Some(arr as Arc<dyn Insight>),
+        notices,
+        watcher,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -93,6 +189,32 @@ async fn main() -> Result<()> {
     let state = Arc::new(RwLock::new(State::load(&config.state_file)?));
     let seerr = Arc::new(SeerrClient::new(&config.seerr_url, secrets.seerr_key));
     let authentik = AuthentikClient::new(&config.authentik_url, secrets.authentik_token);
+
+    // What [insight] adds, wired here rather than next to the task that
+    // uses it: a notices file that cannot be read is an error somebody has
+    // to find in the journal at startup, not one that surfaces ten minutes
+    // later on the first tick.
+    let parts = match &config.insight {
+        None => InsightParts::default(),
+        Some(insight) => {
+            // `Secrets::read` reads the radarr key whenever [insight] is
+            // present, so a None here is a bug in this process rather than
+            // a misconfiguration -- and quietly carrying on without insight
+            // would hide it.
+            let radarr_key = secrets
+                .radarr_key
+                .context("[insight] is configured but no radarr key was read")?;
+            insight_parts(
+                insight,
+                radarr_key,
+                secrets.sonarr_key,
+                seerr.clone() as Arc<dyn Requests>,
+                signal.clone() as Arc<dyn Messenger>,
+                state.clone(),
+                catalogue.clone(),
+            )
+        }
+    };
 
     // 1. The reconciler. Explicitly typed `JoinHandle<()>`: the loop below
     // never breaks, so left to infer its own type it would be the never
@@ -195,10 +317,12 @@ async fn main() -> Result<()> {
             config.settings_url.clone(),
             config.operator_name.clone(),
             config.quality_profiles.clone(),
-            // Task 8 hands the real ones in; until then the dialog works
-            // from Seerr alone, which is exactly the no-[insight] case.
-            None,
-            None,
+            // Both None without an [insight] section -- then the dialog
+            // works from Seerr alone, exactly as it did before insight
+            // existed. `insight` without `notices` is the unreadable-record
+            // case: /status still answers, nothing is said unasked.
+            parts.insight,
+            parts.notices,
         );
         tokio::spawn(async move {
             tracing::info!("signal-seerr is up");
@@ -212,10 +336,47 @@ async fn main() -> Result<()> {
         })
     };
 
-    // Whichever of the three ends first ends the process. A reconciler that
-    // stops reconciling, a webhook listener that stops listening, or a
-    // dialog loop that stops answering is not a degraded bot, it is a
-    // broken one -- and none of the three would otherwise show up anywhere:
+    // 4. The watcher -- the loop that speaks up unasked. It exists only
+    // when [insight] is configured AND its record could be read; see
+    // `InsightParts`.
+    let watch_task = config
+        .insight
+        .as_ref()
+        .zip(parts.watcher)
+        .map(|(insight, watcher)| {
+            let period = std::time::Duration::from_secs(insight.poll_seconds);
+            // Typed for the same reason the reconciler above is: the loop
+            // never breaks, so the block's own type is `!`, and pinning it
+            // to () here says that this task is meant to run forever.
+            let handle: tokio::task::JoinHandle<()> = tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(period);
+                loop {
+                    ticker.tick().await;
+                    // The clock arrives as an argument everywhere below
+                    // this line; this is the one place that reads it.
+                    watcher.round(time::OffsetDateTime::now_utc()).await;
+                }
+            });
+            handle
+        });
+
+    // The fourth arm of the `select!` below, as one future either way. With
+    // no watcher there is nothing to wait for, and `pending()` never
+    // completes -- so that arm is simply never picked, rather than firing
+    // at once and taking the whole process down with it. `select!` takes a
+    // fixed set of arms; leaving one out is not something a `match` can do.
+    let watcher_ended = async move {
+        match watch_task {
+            Some(handle) => handle.await,
+            None => std::future::pending().await,
+        }
+    };
+
+    // Whichever of the four ends first ends the process. A reconciler that
+    // stops reconciling, a webhook listener that stops listening, a dialog
+    // loop that stops answering, or a watcher that stops watching is not a
+    // degraded bot, it is a broken one -- and none of them would otherwise
+    // show up anywhere:
     // `tokio::spawn`'s `JoinHandle` was previously discarded, so a panic in
     // any of them would have left the process running with the unit still
     // `active`. Exiting non-zero is what lets systemd's `Restart =
@@ -226,8 +387,60 @@ async fn main() -> Result<()> {
         r = reconciler_task => tracing::error!(?r, "the reconciler stopped"),
         r = webhook_task => tracing::error!(?r, "the webhook listener stopped"),
         r = dialog_task => tracing::error!(?r, "the dialog loop stopped"),
+        r = watcher_ended => tracing::error!(?r, "the watcher stopped"),
     }
     std::process::exit(1);
+}
+
+#[cfg(test)]
+mod watch_settings_tests {
+    use super::watch_settings;
+    use signal_seerr::config::InsightConfig;
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    fn insight_config() -> InsightConfig {
+        InsightConfig {
+            radarr_url: "https://radarr.example.invalid".into(),
+            radarr_key_file: "/dev/null".into(),
+            sonarr_url: None,
+            sonarr_key_file: None,
+            poll_seconds: 600,
+            stall_after_hours: 36,
+            reason_search: false,
+            max_reason_searches_per_day: 7,
+            notices_file: "/var/lib/signal-seerr/notices.json".into(),
+            profile_languages: BTreeMap::from([(
+                "Dual Language, then German (1080p)".to_string(),
+                vec!["German".to_string(), "English".to_string()],
+            )]),
+        }
+    }
+
+    #[test]
+    fn stall_after_hours_becomes_that_many_hours() {
+        // The whole point of this test: hours, not seconds and not minutes.
+        // Either of those would leave the deadline looking plausible in the
+        // config while the bot announces every open wish within the minute.
+        let settings = watch_settings(&insight_config());
+        assert_eq!(settings.stall_after, time::Duration::hours(36));
+    }
+
+    #[test]
+    fn the_budget_the_file_and_the_languages_are_carried_over_unchanged() {
+        let settings = watch_settings(&insight_config());
+        assert_eq!(settings.max_searches_per_day, 7);
+        assert_eq!(
+            settings.notices_file,
+            Path::new("/var/lib/signal-seerr/notices.json")
+        );
+        assert_eq!(
+            settings
+                .profile_languages
+                .get("Dual Language, then German (1080p)"),
+            Some(&vec!["German".to_string(), "English".to_string()]),
+        );
+    }
 }
 
 #[cfg(test)]
