@@ -98,9 +98,11 @@ impl Requests for FakeSeerr {
 /// way it promised.
 #[derive(Default)]
 struct FakeArr {
-    /// arr id -> what Radarr says about that film.
+    /// arr id -> what Radarr says about that film. Behind a lock so a test
+    /// can let the world change between two rounds, which is what half of
+    /// them are about.
     movies: Mutex<Vec<(i64, ArrMovie)>>,
-    queue: Vec<(MediaKind, QueueItem)>,
+    queue: Mutex<Vec<(MediaKind, QueueItem)>>,
     event: Option<HistoryEvent>,
     releases: Vec<Release>,
     releases_fail: bool,
@@ -128,6 +130,8 @@ impl Insight for FakeArr {
         self.queue_kinds.lock().unwrap().push(kind);
         Ok(self
             .queue
+            .lock()
+            .unwrap()
             .iter()
             .filter(|(k, _)| *k == kind)
             .map(|(_, item)| item.clone())
@@ -517,6 +521,19 @@ async fn a_failed_send_is_retried_next_round_without_a_second_search() {
         }
     );
     assert_eq!(h.arr.release_calls.load(Ordering::SeqCst), 1);
+    // And it is the REASON that goes out, not the general sentence: the
+    // whole point of not searching twice is that the answer was kept.
+    assert_eq!(
+        h.sent()[0].1,
+        expected_notice(
+            &WishState::Unsuitable(Reason::OnlyInLanguages(vec![
+                "Portuguese".into(),
+                "Portuguese (Brazil)".into(),
+            ])),
+            1
+        ),
+        "the retry must carry the stored reason, not fall back to the general sentence"
+    );
 }
 
 /// 5. A film that is not out yet is never "stalled" -- the clock starts the
@@ -572,14 +589,14 @@ async fn a_downloading_wish_is_never_announced() {
             ..Default::default()
         },
         arr: FakeArr {
-            queue: vec![(
+            queue: Mutex::new(vec![(
                 MediaKind::Movie,
                 QueueItem {
                     arr_id: 401,
                     percent: 40,
                     state: QueueState::Downloading,
                 },
-            )],
+            )]),
             ..Default::default()
         },
         ..Default::default()
@@ -856,4 +873,101 @@ async fn a_failed_search_costs_its_budget_and_says_nothing() {
     let second = h.watcher.round(NOW + Duration::hours(1)).await;
     assert_eq!((second.searches, second.notices_sent), (0, 0));
     assert_eq!(h.arr.release_calls.load(Ordering::SeqCst), 1);
+}
+
+// -- the clock is started by an OBSERVATION, never by a note ---------------
+//
+// `released_seen` exists so that a film nobody could have got yet is not
+// called stalled. It may therefore only move the clock forward where a round
+// has actually SEEN the film unavailable. "No note existed yet" is not that
+// observation, and the two histories below are the ordinary ways the two
+// come apart -- in both, a wish stuck for days would otherwise wait another
+// whole `stall_after` before anybody heard a word.
+
+/// 15. The commonest stall there is: grabbed, then the download fails. The
+///     first round sees the queue entry, so `movie()` is never called and
+///     nothing about availability is known. The next round must not read its
+///     first sight of `is_available` as "it came out just now".
+#[tokio::test]
+async fn a_wish_first_seen_in_the_queue_does_not_restart_its_clock_afterwards() {
+    let h = harness(Setup {
+        seerr: FakeSeerr {
+            title: Some(TITLE.into()),
+            ..Default::default()
+        },
+        arr: FakeArr {
+            movies: Mutex::new(vec![(401, available())]),
+            queue: Mutex::new(vec![(
+                MediaKind::Movie,
+                QueueItem {
+                    arr_id: 401,
+                    percent: 30,
+                    state: QueueState::Downloading,
+                },
+            )]),
+            // Never reached in the first round -- a queue entry answers on
+            // its own -- and the reason the second round has something to
+            // say.
+            event: Some(HistoryEvent::DownloadFailed),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let mut wish = movie_wish(1);
+    wish.created_at = NOW - Duration::days(3);
+    h.set_wishes(vec![wish]);
+
+    assert_eq!(h.watcher.round(NOW).await.notices_sent, 0);
+    assert_eq!(
+        h.arr.movie_calls.load(Ordering::SeqCst),
+        0,
+        "a queue entry answers on its own"
+    );
+
+    // The download failed; the entry is gone from the queue.
+    h.arr.queue.lock().unwrap().clear();
+    let report = h.watcher.round(NOW + Duration::hours(1)).await;
+
+    assert_eq!(
+        report.notices_sent, 1,
+        "three days stuck -- the clock must not restart just because this is \
+         the first look at the film itself"
+    );
+}
+
+/// 16. The same defect by the other road: the first round could not reach
+///     Radarr at all and gave up on the wish -- but the note exists from
+///     then on, so "no note" stops telling the truth about what was seen.
+#[tokio::test]
+async fn a_wish_whose_first_lookup_failed_does_not_restart_its_clock_either() {
+    let h = harness(Setup {
+        seerr: FakeSeerr {
+            title: Some(TITLE.into()),
+            ..Default::default()
+        },
+        // No entry for 401, so `movie()` answers with an error.
+        arr: FakeArr {
+            event: Some(HistoryEvent::DownloadFailed),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let mut wish = movie_wish(1);
+    wish.created_at = NOW - Duration::days(3);
+    h.set_wishes(vec![wish]);
+
+    assert_eq!(h.watcher.round(NOW).await.notices_sent, 0);
+    assert!(
+        h.notices.read().unwrap().note(1).is_some(),
+        "the note is written even when the round gives up on the wish"
+    );
+
+    // Radarr answers again.
+    *h.arr.movies.lock().unwrap() = vec![(401, available())];
+    let report = h.watcher.round(NOW + Duration::hours(1)).await;
+
+    assert_eq!(
+        report.notices_sent, 1,
+        "one failed lookup must not cost the person a further day"
+    );
 }

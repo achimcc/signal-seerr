@@ -5,8 +5,15 @@
 //! "it is on the list", and never heard again. One round of this module
 //! gathers what Seerr and Radarr/Sonarr say about every open wish, decides
 //! with `insight::classify` what state it is in, and tells the person who
-//! asked -- once. What has been told is written to the notices file before
-//! the message goes out, so a crash between the two repeats nothing.
+//! asked -- once.
+//!
+//! The order in which the notices file is written is deliberate and is not
+//! the obvious one (design §5.3): the REASON is saved before the message
+//! goes out, `told` only after the message actually went. A crash between
+//! sending and saving therefore repeats that one notice on the next round --
+//! better twice than never, and better than an unsent message recorded as
+//! sent. What must not happen twice is the indexer search, and the saved
+//! reason is what prevents it.
 //!
 //! **This is the only module in the crate that is ever handed a
 //! `ReleaseSearch`.** An interactive search hits every indexer the operator
@@ -36,6 +43,16 @@ use time::{Duration, OffsetDateTime};
 /// operator may shorten the deadline to a couple of hours, and that must
 /// make the bot notice sooner, not talk more.
 const MIN_NOTICE_GAP: Duration = Duration::hours(24);
+
+/// The message of the one line every round logs when it is done.
+///
+/// **This literal is a contract with another repository**: the guest check
+/// in `homeserver` greps the journal for exactly this text to tell a
+/// watcher that is running from one that has stopped. Changing the wording
+/// breaks a check that lives somewhere this compiler cannot see, so the
+/// string is a named constant, the macro interpolates it rather than
+/// repeating it, and a test reads it back off a rendered log line.
+pub const HEARTBEAT: &str = "watch: round complete";
 
 #[derive(Clone, Debug)]
 pub struct WatchSettings {
@@ -84,8 +101,8 @@ struct WishOutcome {
 
 impl Watcher {
     /// One pass over every open wish. Returns what it did, and logs exactly
-    /// one `watch: round complete` line -- the sibling repository's guest
-    /// check greps for that text.
+    /// one [`HEARTBEAT`] line on the way out -- by both ways out, because
+    /// that line says the loop ran, not that Seerr answered.
     pub async fn round(&self, now: OffsetDateTime) -> RoundReport {
         let wishes = match self.seerr.open_wishes().await {
             Ok(wishes) => wishes,
@@ -100,12 +117,7 @@ impl Watcher {
                 // would read, to a check that greps for it, exactly like a
                 // stopped watcher.
                 let report = RoundReport::default();
-                tracing::info!(
-                    wishes = report.wishes,
-                    notices_sent = report.notices_sent,
-                    searches = report.searches,
-                    "watch: round complete"
-                );
+                heartbeat(&report);
                 return report;
             }
         };
@@ -149,12 +161,7 @@ impl Watcher {
         };
         self.persist(&snapshot);
 
-        tracing::info!(
-            wishes = report.wishes,
-            notices_sent = report.notices_sent,
-            searches = report.searches,
-            "watch: round complete"
-        );
+        heartbeat(&report);
         report
     }
 
@@ -175,12 +182,11 @@ impl Watcher {
 
         // From here on the wish has a note, whatever else happens: it is
         // what `retain_only` keeps and what the deadline is measured on.
-        let (first_sight, mut title, reason, mut released_seen, told, last_notice) = {
+        let (seen_unreleased, mut title, reason, mut released_seen, told, last_notice) = {
             let mut notices = self.notices_mut();
-            let first_sight = notices.note(wish.id).is_none();
             let note = notices.note_mut(wish.id, now);
             (
-                first_sight,
+                note.seen_unreleased,
                 note.title.clone(),
                 note.reason.clone(),
                 note.released_seen,
@@ -232,18 +238,31 @@ impl Watcher {
         // The deadline for a film nobody could have got yet runs from the
         // day it became available, not from the day somebody asked.
         //
-        // The clock is only ever moved forward on an OBSERVED transition.
-        // A film that is already available the very first time this loop
-        // looks at the wish was, as far as anything here can tell, out when
-        // it was asked for -- so the moment recorded is `created_at`, not
-        // `now` (design §5.1: "bei einem beim Wunsch schon erschienenen Film
-        // ist das createdAt"). Recording it rather than leaving it empty is
-        // what stops the *next* round from reading the same "first true" as
-        // a transition and pushing the deadline a day into the future.
-        if released_seen.is_none() && movie.as_ref().is_some_and(|m| m.is_available) {
-            let seen_at = if first_sight { wish.created_at } else { now };
-            self.notices_mut().note_mut(wish.id, now).released_seen = Some(seen_at);
-            released_seen = Some(seen_at);
+        // The clock is only ever moved forward on an OBSERVED transition,
+        // and the evidence for one is `seen_unreleased`: some round really
+        // did look and really did find the film not out yet. Anything else
+        // -- a first round that saw a queue entry and so never called
+        // `movie()`, or one that gave up on a Radarr error -- leaves the
+        // base at `created_at` (design §5.1: "bei einem beim Wunsch schon
+        // erschienenen Film ist das createdAt"). Deriving it from the note's
+        // mere existence looked equivalent and is not: in both of those
+        // histories the wish has been stuck for days, and reading the first
+        // sight of `is_available` as a transition would cost the person
+        // another whole `stall_after` in silence.
+        match movie.as_ref().map(|m| m.is_available) {
+            Some(false) if !seen_unreleased => {
+                self.notices_mut().note_mut(wish.id, now).seen_unreleased = true;
+            }
+            Some(true) if released_seen.is_none() => {
+                let seen_at = if seen_unreleased {
+                    now
+                } else {
+                    wish.created_at
+                };
+                self.notices_mut().note_mut(wish.id, now).released_seen = Some(seen_at);
+                released_seen = Some(seen_at);
+            }
+            _ => {}
         }
 
         let mut state = classify(
@@ -448,6 +467,20 @@ impl Watcher {
             }
         }
     }
+}
+
+/// The one line a finished round logs, from the single place that logs it.
+/// Both ways out of `round` come through here -- the ordinary one and the
+/// one where Seerr could not be reached -- because the line says the LOOP
+/// ran, not that Seerr answered.
+fn heartbeat(report: &RoundReport) {
+    tracing::info!(
+        wishes = report.wishes,
+        notices_sent = report.notices_sent,
+        searches = report.searches,
+        "{}",
+        HEARTBEAT
+    );
 }
 
 fn rfc3339(now: OffsetDateTime) -> String {

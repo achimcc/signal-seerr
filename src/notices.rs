@@ -27,6 +27,20 @@ pub struct Note {
     pub first_seen: OffsetDateTime,
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub released_seen: Option<OffsetDateTime>,
+    /// Whether a round has ever seen this film as NOT yet available.
+    ///
+    /// It is what makes `released_seen` an observation rather than a guess:
+    /// only a wish that was once seen unreleased can have "it came out" as
+    /// the start of its stall clock. Without it the first sight of an
+    /// available film looks like the transition, and the two commonest
+    /// histories -- a first round that saw a queue entry, or one whose
+    /// lookup failed -- would push the deadline a whole `stall_after` into
+    /// the future.
+    ///
+    /// `#[serde(default)]` and no schema bump: an older file simply says
+    /// "never seen unreleased", which is the safe reading.
+    #[serde(default)]
+    pub seen_unreleased: bool,
     #[serde(default)]
     pub reason: Option<Reason>,
     #[serde(default, with = "time::serde::rfc3339::option")]
@@ -44,6 +58,7 @@ impl Note {
             title: None,
             first_seen,
             released_seen: None,
+            seen_unreleased: false,
             reason: None,
             searched_at: None,
             told: BTreeMap::new(),
@@ -118,12 +133,22 @@ impl Notices {
     }
 
     /// Whether an indexer search may still run today, counted per UTC
-    /// calendar day: a day with no searches yet, or one that has not seen
-    /// `per_day` of them.
+    /// calendar day.
+    ///
+    /// Today's count is normalised BEFORE it is compared, not after: the
+    /// fresh-record and turned-over-day branches used to answer "yes"
+    /// without looking at `per_day` at all, so a budget of zero -- the one
+    /// setting whose entire point is that nothing happens -- still bought
+    /// one search a day.
     pub fn may_search(&self, now: OffsetDateTime, per_day: u32) -> bool {
-        match self.search_day {
-            Some(day) if day == today_utc(now) => self.searches_today < per_day,
-            _ => true,
+        self.searches_on(today_utc(now)) < per_day
+    }
+
+    fn searches_on(&self, day: Date) -> u32 {
+        if self.search_day == Some(day) {
+            self.searches_today
+        } else {
+            0
         }
     }
 
@@ -266,6 +291,44 @@ mod tests {
 
         // A new UTC calendar day resets the counter, even minutes later.
         assert!(n.may_search(next_day, 2));
+    }
+
+    #[test]
+    fn a_budget_of_zero_allows_no_search_at_all() {
+        // The fresh-record and new-day branches used to answer "yes" without
+        // looking at `per_day`, so an operator who switched the interactive
+        // search off by setting the budget to zero still got one search a
+        // day -- the one setting whose whole point is that nothing happens.
+        let n = Notices::default();
+        assert!(!n.may_search(datetime!(2026-09-21 08:00:00 UTC), 0));
+
+        let mut used = Notices::default();
+        used.count_search(datetime!(2026-09-21 08:00:00 UTC));
+        assert!(
+            !used.may_search(datetime!(2026-09-22 08:00:00 UTC), 0),
+            "a new day resets the counter, it does not grant a search"
+        );
+    }
+
+    #[test]
+    fn a_note_written_before_seen_unreleased_existed_still_loads() {
+        // The field arrived after the first deployments. A file without it
+        // must load as "never seen unreleased" rather than failing, which
+        // would take the whole loop down over a schema that did not change.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notices.json");
+        std::fs::write(
+            &path,
+            r#"{"schema":1,"requests":{"7":{"title":"Arrival",
+               "first_seen":"2026-09-21T10:00:00Z"}},
+               "search_day":null,"searches_today":0}"#,
+        )
+        .unwrap();
+
+        let back = Notices::load(&path).unwrap();
+        let note = back.note(7).expect("the note must survive");
+        assert_eq!(note.title.as_deref(), Some("Arrival"));
+        assert!(!note.seen_unreleased);
     }
 
     #[test]
