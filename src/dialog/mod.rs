@@ -1,6 +1,6 @@
 use crate::directory::Directory;
 use crate::i18n::{Catalogue, Locale};
-use crate::model::{Aci, Hit, MediaKind, PendingState, QualityProfile, Seasons, SeerrUserId};
+use crate::model::{Aci, Hit, MediaKind, QualityProfile, Seasons, SeerrUserId};
 use crate::seerr::Requests;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -497,6 +497,10 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         }
     }
 
+    /// Maps `Wish::media_status` to the state shown -- inline for now, one
+    /// `title_for` call per line. Task 7 replaces this with the real status
+    /// logic (queue position, *arr history); this keeps `/status` compiling
+    /// and correct in the meantime.
     async fn status(&mut self, from: &Aci, locale: Locale) -> Vec<String> {
         let user = match self.seerr_user(from, locale).await {
             Ok(id) => id,
@@ -506,27 +510,39 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
             Ok(list) if list.is_empty() => {
                 vec![self.catalogue.text(locale, "status.empty", &[])]
             }
-            Ok(list) => vec![list
-                .iter()
-                .map(|p| {
-                    let state_key = match p.state {
-                        PendingState::Waiting => "status.waiting",
-                        PendingState::Fetching => "status.fetching",
-                        PendingState::Available => "status.available",
+            Ok(list) => {
+                let mut lines = Vec::with_capacity(list.len());
+                for wish in &list {
+                    let title = match self.seerr.title_for(wish.kind, wish.tmdb_id).await {
+                        Ok(Some(title)) => title,
+                        Ok(None) => "?".to_string(),
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                tmdb_id = wish.tmdb_id,
+                                "cannot look up the title"
+                            );
+                            "?".to_string()
+                        }
+                    };
+                    let state_key = match wish.media_status {
+                        5 => "status.available",
+                        3 | 4 => "status.fetching",
+                        _ => "status.waiting",
                     };
                     let state = self.catalogue.text(locale, state_key, &[]);
-                    self.catalogue.text(
+                    lines.push(self.catalogue.text(
                         locale,
                         "status.line",
                         &[
-                            ("id", &p.id.to_string()),
-                            ("title", &p.title),
+                            ("id", &wish.id.to_string()),
+                            ("title", &title),
                             ("state", &state),
                         ],
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n")],
+                    ));
+                }
+                vec![lines.join("\n")]
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "cannot list requests");
                 vec![self.catalogue.text(locale, "error.seerr_down", &[])]
@@ -725,7 +741,7 @@ mod tests {
     // that it is treated as gone.
 
     use crate::directory::Member;
-    use crate::model::{Pending, SeerrUserId};
+    use crate::model::{SeerrUserId, Wish};
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -770,13 +786,23 @@ mod tests {
         async fn profile_of(&self, _request_id: i64) -> anyhow::Result<Option<i64>> {
             Ok(None)
         }
-        async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Pending>> {
+        async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Wish>> {
+            Ok(vec![])
+        }
+        async fn open_wishes(&self) -> anyhow::Result<Vec<Wish>> {
             Ok(vec![])
         }
         async fn withdraw(&self, _id: i64, _u: SeerrUserId) -> anyhow::Result<()> {
             Ok(())
         }
         async fn title_of(&self, _id: i64) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
+        async fn title_for(
+            &self,
+            _kind: MediaKind,
+            _tmdb_id: i64,
+        ) -> anyhow::Result<Option<String>> {
             Ok(None)
         }
 

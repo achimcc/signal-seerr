@@ -1,4 +1,4 @@
-use crate::model::{Hit, MediaKind, Pending, PendingState, QualityProfile, Seasons, SeerrUserId};
+use crate::model::{Hit, MediaKind, QualityProfile, Seasons, SeerrUserId, Wish};
 use crate::secret::Secret;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
@@ -25,7 +25,12 @@ pub trait Requests: Send + Sync {
     /// Which profile the request ACTUALLY carries, read back from Seerr.
     /// `None` means Seerr named none, so the *arr's own default applies.
     async fn profile_of(&self, request_id: i64) -> Result<Option<i64>>;
-    async fn pending(&self, as_user: SeerrUserId) -> Result<Vec<Pending>>;
+    /// This one person's own requests.
+    async fn pending(&self, as_user: SeerrUserId) -> Result<Vec<Wish>>;
+    /// Every wish in the household that is not yet available, across
+    /// everybody -- `pending` above is scoped to one person and cannot
+    /// answer this.
+    async fn open_wishes(&self) -> Result<Vec<Wish>>;
     async fn withdraw(&self, id: i64, as_user: SeerrUserId) -> Result<()>;
     /// Who asked for this request — the Authentik username, read from Seerr
     /// rather than taken from a webhook payload. See the note in Task 13.
@@ -35,6 +40,10 @@ pub trait Requests: Send + Sync {
     /// `subject`, but that is text an authenticated caller chooses; it lands
     /// in a message to a person. Audit finding B43c (2026-09-20).
     async fn title_of(&self, request_id: i64) -> Result<Option<String>>;
+
+    /// The title Seerr holds for a `tmdb_id` directly -- `Wish` itself never
+    /// carries one; see the note on `title_of`.
+    async fn title_for(&self, kind: MediaKind, tmdb_id: i64) -> Result<Option<String>>;
 }
 
 /// Lets an `Arc<SeerrClient>` satisfy `R: Requests` directly, so the same
@@ -65,8 +74,11 @@ impl<T: Requests + ?Sized> Requests for std::sync::Arc<T> {
     async fn profile_of(&self, request_id: i64) -> Result<Option<i64>> {
         (**self).profile_of(request_id).await
     }
-    async fn pending(&self, as_user: SeerrUserId) -> Result<Vec<Pending>> {
+    async fn pending(&self, as_user: SeerrUserId) -> Result<Vec<Wish>> {
         (**self).pending(as_user).await
+    }
+    async fn open_wishes(&self) -> Result<Vec<Wish>> {
+        (**self).open_wishes().await
     }
     async fn withdraw(&self, id: i64, as_user: SeerrUserId) -> Result<()> {
         (**self).withdraw(id, as_user).await
@@ -77,6 +89,9 @@ impl<T: Requests + ?Sized> Requests for std::sync::Arc<T> {
     async fn title_of(&self, request_id: i64) -> Result<Option<String>> {
         (**self).title_of(request_id).await
     }
+    async fn title_for(&self, kind: MediaKind, tmdb_id: i64) -> Result<Option<String>> {
+        (**self).title_for(kind, tmdb_id).await
+    }
 }
 
 /// Which *arr serves this kind of media. Their id spaces are separate, so
@@ -86,6 +101,40 @@ fn arr_of(kind: MediaKind) -> &'static str {
         MediaKind::Movie => "radarr",
         MediaKind::Tv => "sonarr",
     }
+}
+
+/// Parses one entry of `results` from `/api/v1/user/{id}/requests` or
+/// `/api/v1/request` -- the same shape either way, measured on 2026-09-21
+/// (`tests/fixtures/README.md`). `None` means the entry could not be
+/// understood; the caller logs it rather than dropping it in silence, since
+/// silent dropping is exactly the bug this task removes.
+fn wish_from(r: &serde_json::Value) -> Option<Wish> {
+    let media = r.get("media")?;
+    Some(Wish {
+        id: r.get("id")?.as_i64()?,
+        kind: match r.get("type")?.as_str()? {
+            "tv" => MediaKind::Tv,
+            _ => MediaKind::Movie,
+        },
+        tmdb_id: media.get("tmdbId")?.as_i64()?,
+        request_status: r.get("status")?.as_i64()?,
+        media_status: media.get("status")?.as_i64()?,
+        arr_id: media.get("externalServiceId").and_then(|v| v.as_i64()),
+        created_at: time::OffsetDateTime::parse(
+            r.get("createdAt")?.as_str()?,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .ok()?,
+        profile_name: r
+            .get("profileName")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        requested_by: r
+            .get("requestedBy")
+            .and_then(|u| u.get("jellyfinUsername"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    })
 }
 
 pub struct SeerrClient {
@@ -320,7 +369,7 @@ impl Requests for SeerrClient {
             .ok_or_else(|| anyhow::anyhow!("seerr accepted the request but named no id"))
     }
 
-    async fn pending(&self, as_user: SeerrUserId) -> Result<Vec<Pending>> {
+    async fn pending(&self, as_user: SeerrUserId) -> Result<Vec<Wish>> {
         let response = self
             .get(&format!("/api/v1/user/{}/requests", as_user.0))
             .query(&[("take", "50")])
@@ -334,23 +383,54 @@ impl Requests for SeerrClient {
             .unwrap_or(&[])
             .iter()
             .filter_map(|r| {
-                let media = r.get("media")?;
-                Some(Pending {
-                    id: r.get("id")?.as_i64()?,
-                    title: media
-                        .get("title")
-                        .or_else(|| media.get("name"))
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("?")
-                        .to_string(),
-                    state: match media.get("status").and_then(|s| s.as_i64()) {
-                        Some(5) => PendingState::Available,
-                        Some(3) | Some(4) => PendingState::Fetching,
-                        _ => PendingState::Waiting,
-                    },
-                })
+                let wish = wish_from(r);
+                if wish.is_none() {
+                    tracing::warn!(id = ?r.get("id"), "request entry did not parse");
+                }
+                wish
             })
             .collect())
+    }
+
+    /// The household-wide list a reminder needs, not scoped to one person --
+    /// unlike `pending`, this walks `/api/v1/request` page by page (Seerr
+    /// caps `take` well below the size this collection can reach) and then
+    /// drops what is already available.
+    async fn open_wishes(&self) -> Result<Vec<Wish>> {
+        let mut wishes = Vec::new();
+        let mut page: i64 = 0;
+        loop {
+            let skip = page * 100;
+            let response = self
+                .get(&format!(
+                    "/api/v1/request?take=100&skip={skip}&filter=all&sort=added"
+                ))
+                .send()
+                .await?;
+            let body = self.json(response).await?;
+            for r in body
+                .get("results")
+                .and_then(|r| r.as_array())
+                .map(|v| v.as_slice())
+                .unwrap_or(&[])
+            {
+                match wish_from(r) {
+                    Some(w) => wishes.push(w),
+                    None => tracing::warn!(id = ?r.get("id"), "request entry did not parse"),
+                }
+            }
+            let pages = body
+                .get("pageInfo")
+                .and_then(|p| p.get("pages"))
+                .and_then(|p| p.as_i64())
+                .unwrap_or(1);
+            page += 1;
+            if page >= pages {
+                break;
+            }
+        }
+        wishes.retain(|w| w.media_status != 5);
+        Ok(wishes)
     }
 
     async fn requester_of(&self, request_id: i64) -> Result<Option<String>> {
@@ -374,9 +454,8 @@ impl Requests for SeerrClient {
 
     /// TWO CALLS, AND THE FIRST ONE ALONE DOES NOT DO IT: the request object
     /// carries `media.tmdbId` and `media.mediaType`, but NO title -- measured
-    /// at the running instance on 2026-09-20. The title lives behind
-    /// `/api/v1/movie/{tmdb}` or `/api/v1/tv/{tmdb}`, where a movie calls it
-    /// `title` and a series `name`.
+    /// at the running instance on 2026-09-20. This first call gets the
+    /// `tmdb_id` and kind; `title_for` makes the second.
     async fn title_of(&self, request_id: i64) -> Result<Option<String>> {
         let response = self
             .get(&format!("/api/v1/request/{request_id}"))
@@ -385,19 +464,29 @@ impl Requests for SeerrClient {
         let body = self.json(response).await?;
         let media = body.get("media");
         let tmdb = media.and_then(|m| m.get("tmdbId")).and_then(|v| v.as_i64());
-        let art = media
+        let kind = match media
             .and_then(|m| m.get("mediaType"))
             .and_then(|v| v.as_str())
-            .unwrap_or("movie");
+        {
+            Some("tv") => MediaKind::Tv,
+            _ => MediaKind::Movie,
+        };
         let Some(tmdb) = tmdb else {
             return Ok(None);
         };
-        let pfad = if art == "tv" {
-            format!("/api/v1/tv/{tmdb}")
-        } else {
-            format!("/api/v1/movie/{tmdb}")
+        self.title_for(kind, tmdb).await
+    }
+
+    /// The title lives behind `/api/v1/movie/{tmdb}` or `/api/v1/tv/{tmdb}`,
+    /// where a movie calls it `title` and a series `name`. `Wish` itself
+    /// never carries a title -- Seerr does not send one (see the note on
+    /// `Wish` in `model.rs`).
+    async fn title_for(&self, kind: MediaKind, tmdb_id: i64) -> Result<Option<String>> {
+        let path = match kind {
+            MediaKind::Tv => format!("/api/v1/tv/{tmdb_id}"),
+            MediaKind::Movie => format!("/api/v1/movie/{tmdb_id}"),
         };
-        let detail = self.json(self.get(&pfad).send().await?).await?;
+        let detail = self.json(self.get(&path).send().await?).await?;
         Ok(detail
             .get("title")
             .or_else(|| detail.get("name"))
@@ -479,18 +568,30 @@ mod arc_requests_tests {
         async fn profile_of(&self, _request_id: i64) -> Result<Option<i64>> {
             Ok(None)
         }
-        async fn pending(&self, _as_user: SeerrUserId) -> Result<Vec<Pending>> {
-            Ok(vec![Pending {
+        async fn pending(&self, _as_user: SeerrUserId) -> Result<Vec<Wish>> {
+            Ok(vec![Wish {
                 id: 1,
-                title: "canned pending".into(),
-                state: PendingState::Waiting,
+                kind: MediaKind::Movie,
+                tmdb_id: 42,
+                request_status: 1,
+                media_status: 3,
+                arr_id: None,
+                created_at: time::OffsetDateTime::UNIX_EPOCH,
+                profile_name: None,
+                requested_by: Some("canned-requester".into()),
             }])
+        }
+        async fn open_wishes(&self) -> Result<Vec<Wish>> {
+            Ok(vec![])
         }
         async fn withdraw(&self, _id: i64, _as_user: SeerrUserId) -> Result<()> {
             Ok(())
         }
         async fn title_of(&self, _request_id: i64) -> Result<Option<String>> {
             Ok(None)
+        }
+        async fn title_for(&self, _kind: MediaKind, _tmdb_id: i64) -> Result<Option<String>> {
+            Ok(Some("canned title".into()))
         }
 
         async fn requester_of(&self, _request_id: i64) -> Result<Option<String>> {
@@ -543,7 +644,12 @@ mod arc_requests_tests {
         );
         let pending = client.pending(SeerrUserId(7)).await.unwrap();
         assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].title, "canned pending");
+        assert_eq!(pending[0].requested_by.as_deref(), Some("canned-requester"));
+        assert_eq!(client.open_wishes().await.unwrap(), vec![]);
+        assert_eq!(
+            client.title_for(MediaKind::Movie, 42).await.unwrap(),
+            Some("canned title".to_string())
+        );
         assert!(client.withdraw(1, SeerrUserId(7)).await.is_ok());
         assert_eq!(
             client.requester_of(1).await.unwrap(),

@@ -35,9 +35,9 @@ pub struct FakeSeerr {
 
 #[async_trait::async_trait]
 impl Requests for FakeSeerr {
-        async fn title_of(&self, _request_id: i64) -> anyhow::Result<Option<String>> {
-            Ok(None)
-        }
+    async fn title_of(&self, _request_id: i64) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
 
     async fn search(
         &self,
@@ -84,7 +84,10 @@ impl Requests for FakeSeerr {
             .push((hit.tmdb_id, seasons, as_user));
         Ok(1849)
     }
-    async fn pending(&self, _as_user: SeerrUserId) -> anyhow::Result<Vec<Pending>> {
+    async fn pending(&self, _as_user: SeerrUserId) -> anyhow::Result<Vec<Wish>> {
+        Ok(vec![])
+    }
+    async fn open_wishes(&self) -> anyhow::Result<Vec<Wish>> {
         Ok(vec![])
     }
     async fn withdraw(&self, _id: i64, _as_user: SeerrUserId) -> anyhow::Result<()> {
@@ -93,6 +96,9 @@ impl Requests for FakeSeerr {
     // Not exercised by any test in this file -- Task 13's territory -- but
     // required by the trait, which already carries it (Task 9).
     async fn requester_of(&self, _request_id: i64) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+    async fn title_for(&self, _kind: MediaKind, _tmdb_id: i64) -> anyhow::Result<Option<String>> {
         Ok(None)
     }
 }
@@ -538,18 +544,34 @@ async fn status_lists_what_is_still_on_its_way() {
         ) -> anyhow::Result<i64> {
             Ok(1)
         }
-        async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Pending>> {
-            Ok(vec![Pending {
+        async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Wish>> {
+            Ok(vec![Wish {
                 id: 1849,
-                title: "Blade Runner 2049".into(),
-                state: PendingState::Fetching,
+                kind: MediaKind::Movie,
+                tmdb_id: 4321,
+                request_status: 1,
+                media_status: 3,
+                arr_id: None,
+                created_at: time::OffsetDateTime::UNIX_EPOCH,
+                profile_name: None,
+                requested_by: None,
             }])
+        }
+        async fn open_wishes(&self) -> anyhow::Result<Vec<Wish>> {
+            Ok(vec![])
         }
         async fn withdraw(&self, _i: i64, _u: SeerrUserId) -> anyhow::Result<()> {
             Ok(())
         }
         async fn requester_of(&self, _request_id: i64) -> anyhow::Result<Option<String>> {
             Ok(None)
+        }
+        async fn title_for(
+            &self,
+            _kind: MediaKind,
+            _tmdb_id: i64,
+        ) -> anyhow::Result<Option<String>> {
+            Ok(Some("Blade Runner 2049".into()))
         }
     }
     let aci = Aci("aaaa".into());
@@ -624,8 +646,18 @@ async fn weg_on_somebody_elses_request_reports_it_as_not_yours() {
         ) -> anyhow::Result<i64> {
             Ok(1)
         }
-        async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Pending>> {
+        async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Wish>> {
             Ok(vec![])
+        }
+        async fn open_wishes(&self) -> anyhow::Result<Vec<Wish>> {
+            Ok(vec![])
+        }
+        async fn title_for(
+            &self,
+            _kind: MediaKind,
+            _tmdb_id: i64,
+        ) -> anyhow::Result<Option<String>> {
+            Ok(None)
         }
         async fn withdraw(&self, id: i64, _u: SeerrUserId) -> anyhow::Result<()> {
             anyhow::bail!("request {id} is not yours")

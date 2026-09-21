@@ -210,52 +210,74 @@ async fn withdrawing_somebody_elses_request_is_refused_before_it_is_sent() {
     assert!(err.contains("not yours"), "got: {err}");
 }
 
-use signal_seerr::model::{Pending, PendingState};
+/// The two recordings this file reads: a running Seerr 3.2.0 actually sent
+/// these on 2026-09-21 (see `tests/fixtures/README.md`). Every test for a
+/// wire format below reads one of them instead of building the body by hand
+/// -- the lesson the fixtures exist to enforce, having already cost a wrong
+/// `request_id` type and an invented `media.title` field.
+const USER_REQUESTS: &str = include_str!("fixtures/seerr-user-requests.json");
+const REQUEST_ALL: &str = include_str!("fixtures/seerr-request-all.json");
 
 #[tokio::test]
-async fn pending_maps_status_and_falls_back_to_the_series_name() {
+async fn pending_reads_the_recorded_wire_format() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/user/12/requests"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "pageInfo": { "pages": 1, "results": 4 },
-            "results": [
-                { "id": 1, "media": { "title": "Blade Runner 2049", "status": 5 } },
-                { "id": 2, "media": { "name": "Andor", "status": 3 } },
-                { "id": 3, "media": { "name": "The Bear", "status": 4 } },
-                { "id": 4, "media": { "title": "Untitled Film", "status": 1 } }
-            ]
-        })))
+        .and(path("/api/v1/user/1/requests"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(USER_REQUESTS, "application/json"))
         .mount(&server)
         .await;
 
-    let items = client(&server).pending(SeerrUserId(12)).await.unwrap();
+    let wishes = client(&server).pending(SeerrUserId(1)).await.unwrap();
 
+    let raw: serde_json::Value = serde_json::from_str(USER_REQUESTS).unwrap();
     assert_eq!(
-        items,
-        vec![
-            Pending {
-                id: 1,
-                title: "Blade Runner 2049".into(),
-                state: PendingState::Available
-            },
-            Pending {
-                id: 2,
-                title: "Andor".into(),
-                state: PendingState::Fetching
-            },
-            Pending {
-                id: 3,
-                title: "The Bear".into(),
-                state: PendingState::Fetching
-            },
-            Pending {
-                id: 4,
-                title: "Untitled Film".into(),
-                state: PendingState::Waiting
-            },
-        ]
+        wishes.len(),
+        raw["results"].as_array().unwrap().len(),
+        "no entry may be dropped silently"
     );
+    let open: Vec<_> = wishes.iter().filter(|w| w.media_status != 5).collect();
+    assert!(!open.is_empty(), "the recording contains open wishes");
+    assert!(
+        open.iter().any(|w| w.arr_id.is_some()),
+        "externalServiceId must be read"
+    );
+    assert!(wishes.iter().all(|w| w
+        .requested_by
+        .as_deref()
+        .is_some_and(|u| u.starts_with("person-"))));
+}
+
+/// `GET /api/v1/user/{id}/requests` above is scoped to one person and never
+/// carries anything for anybody else -- `open_wishes` is the household-wide
+/// list a reminder needs, and it comes from a different endpoint
+/// (`/api/v1/request`) with its own pagination. This recording has a single
+/// page (`pageInfo.pages == 1`), which is enough to prove the filter without
+/// a second mock.
+#[tokio::test]
+async fn open_wishes_drops_what_is_already_available() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/request"))
+        .and(query_param("take", "100"))
+        .and(query_param("skip", "0"))
+        .and(query_param("filter", "all"))
+        .and(query_param("sort", "added"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(REQUEST_ALL, "application/json"))
+        .mount(&server)
+        .await;
+
+    let wishes = client(&server).open_wishes().await.unwrap();
+
+    let raw: serde_json::Value = serde_json::from_str(REQUEST_ALL).unwrap();
+    let open_in_recording = raw["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["media"]["status"].as_i64() != Some(5))
+        .count();
+    assert!(open_in_recording > 0, "the recording has open wishes");
+    assert_eq!(wishes.len(), open_in_recording);
+    assert!(wishes.iter().all(|w| w.media_status != 5));
 }
 
 #[tokio::test]

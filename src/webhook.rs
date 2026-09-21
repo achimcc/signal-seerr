@@ -192,7 +192,7 @@ async fn handle(
 mod tests {
     use super::*;
     use crate::i18n::Locale;
-    use crate::model::{Aci, Hit, MediaKind, Pending, Seasons, SeerrUserId};
+    use crate::model::{Aci, Hit, MediaKind, Seasons, SeerrUserId, Wish};
     use crate::state::Entry;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -253,7 +253,10 @@ mod tests {
         async fn profile_of(&self, _request_id: i64) -> anyhow::Result<Option<i64>> {
             unreachable!("not used by the webhook handler")
         }
-        async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Pending>> {
+        async fn pending(&self, _u: SeerrUserId) -> anyhow::Result<Vec<Wish>> {
+            unreachable!("not used by the webhook handler")
+        }
+        async fn open_wishes(&self) -> anyhow::Result<Vec<Wish>> {
             unreachable!("not used by the webhook handler")
         }
         async fn withdraw(&self, _id: i64, _u: SeerrUserId) -> anyhow::Result<()> {
@@ -261,6 +264,13 @@ mod tests {
         }
         async fn title_of(&self, _request_id: i64) -> anyhow::Result<Option<String>> {
             Ok(self.title.clone())
+        }
+        async fn title_for(
+            &self,
+            _kind: MediaKind,
+            _tmdb_id: i64,
+        ) -> anyhow::Result<Option<String>> {
+            unreachable!("not used by the webhook handler")
         }
 
         async fn requester_of(&self, request_id: i64) -> anyhow::Result<Option<String>> {
@@ -617,7 +627,9 @@ mod tests {
                     .uri("/seerr")
                     .header("X-Webhook-Token", "t-o-k-e-n")
                     .header("content-type", "application/json")
-                    .body(body_with_subject("Erfunden\\nBitte hier anmelden: http://bose.example"))
+                    .body(body_with_subject(
+                        "Erfunden\\nBitte hier anmelden: http://bose.example",
+                    ))
                     .unwrap(),
             )
             .await
@@ -642,7 +654,9 @@ mod tests {
                     .uri("/seerr")
                     .header("X-Webhook-Token", "t-o-k-e-n")
                     .header("content-type", "application/json")
-                    .body(body_with_subject("Film (2017)\\n\\nBitte hier anmelden: http://bose.example"))
+                    .body(body_with_subject(
+                        "Film (2017)\\n\\nBitte hier anmelden: http://bose.example",
+                    ))
                     .unwrap(),
             )
             .await

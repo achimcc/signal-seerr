@@ -49,16 +49,22 @@ pub enum Seasons {
     Only(Vec<u16>),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PendingState {
-    Waiting,
-    Fetching,
-    Available,
-}
-
+/// One request as Seerr's own wire format actually carries it -- not what
+/// somebody believed it sends. Seerr never sends a title here; see
+/// `Requests::title_for`.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Pending {
+pub struct Wish {
     pub id: i64,
-    pub title: String,
-    pub state: PendingState,
+    pub kind: MediaKind,
+    pub tmdb_id: i64,
+    /// Seerr's MediaRequestStatus: 1 pending, 2 approved, 3 declined, 4 failed, 5 completed.
+    pub request_status: i64,
+    /// Seerr's MediaStatus: 3 processing, 4 partially available, 5 available.
+    pub media_status: i64,
+    /// `media.externalServiceId` -- the movie's id in Radarr / the series' in Sonarr.
+    pub arr_id: Option<i64>,
+    pub created_at: time::OffsetDateTime,
+    pub profile_name: Option<String>,
+    /// `requestedBy.jellyfinUsername` -- the one identity source (see CLAUDE.md).
+    pub requested_by: Option<String>,
 }
