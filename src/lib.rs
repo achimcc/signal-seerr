@@ -1,3 +1,4 @@
+pub mod arr;
 pub mod config;
 pub mod dialog;
 pub mod directory;
