@@ -94,7 +94,19 @@ impl Watcher {
                 // outage must not look like everybody withdrawing at once,
                 // which would clear the record and repeat every notice.
                 tracing::warn!(error = %e, "cannot ask seerr for the open wishes");
-                return RoundReport::default();
+                // The heartbeat is a statement about the LOOP, not about
+                // Seerr: the round did run, and it is the warning above
+                // that says Seerr is down. Without this line a Seerr outage
+                // would read, to a check that greps for it, exactly like a
+                // stopped watcher.
+                let report = RoundReport::default();
+                tracing::info!(
+                    wishes = report.wishes,
+                    notices_sent = report.notices_sent,
+                    searches = report.searches,
+                    "watch: round complete"
+                );
+                return report;
             }
         };
         let mut report = RoundReport {

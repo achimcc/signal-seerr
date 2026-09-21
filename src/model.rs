@@ -90,16 +90,38 @@ pub enum Reason {
 pub enum WishState {
     Available,
     NotHandedOver,
+    /// Seerr's MediaStatus 4: some of it is there, the rest is not. Only a
+    /// series can be in this state.
+    PartlyAvailable,
     ImportStuck,
-    Downloading { percent: u8 },
-    NotReleased { date: Option<time::Date> },
+    Downloading {
+        percent: u8,
+    },
+    NotReleased {
+        date: Option<time::Date>,
+    },
     DownloadFailed,
     Unsuitable(Reason),
     Searching,
+    /// Nothing is known beyond what Seerr says: no film evidence was
+    /// gathered at all, because there is none to gather (a series -- Sonarr
+    /// has no "movie" and no interactive search here) or because no
+    /// `[insight]` is configured.
+    ///
+    /// Deliberately NOT `Searching`. "Still looking, nothing suitable so
+    /// far" would be a claim about a measurement nobody made, and answering
+    /// that for a wish nobody could fetch is the exact defect this whole
+    /// feature exists to remove.
+    Waiting,
 }
 
 impl WishState {
-    /// The key under which "already told" is remembered; None = never announced unasked.
+    /// The key under which "already told" is remembered; None = never
+    /// announced unasked.
+    ///
+    /// `Waiting` and `PartlyAvailable` are None on purpose: the first has no
+    /// measurement behind it (see the variant), and the second is not a
+    /// problem -- part of the series is there and the rest is on its way.
     pub fn notice_class(&self) -> Option<&'static str> {
         match self {
             WishState::Searching | WishState::Unsuitable(_) => Some("unsuitable"),
@@ -113,6 +135,18 @@ impl WishState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A state the bot cannot back with a measurement is never announced
+    /// unasked. `Waiting` means "no film evidence was gathered at all" (a
+    /// series, or a wish with no insight configured) and `PartlyAvailable`
+    /// means part of it is already there -- neither is a problem somebody
+    /// needs to be woken up about, and the unasked "nothing suitable so
+    /// far" would be a claim about a search that never happened.
+    #[test]
+    fn the_two_states_without_film_evidence_are_never_announced_unasked() {
+        assert_eq!(WishState::Waiting.notice_class(), None);
+        assert_eq!(WishState::PartlyAvailable.notice_class(), None);
+    }
 
     #[test]
     fn reason_only_in_languages_round_trips_through_json() {

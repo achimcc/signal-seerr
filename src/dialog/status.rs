@@ -13,6 +13,8 @@ pub fn state_text(catalogue: &Catalogue, locale: Locale, state: &WishState) -> S
     match state {
         WishState::Available => catalogue.text(locale, "status.available", &[]),
         WishState::NotHandedOver => catalogue.text(locale, "status.not_handed_over", &[]),
+        WishState::PartlyAvailable => catalogue.text(locale, "status.partly_available", &[]),
+        WishState::Waiting => catalogue.text(locale, "status.waiting", &[]),
         WishState::ImportStuck => catalogue.text(locale, "status.import_stuck", &[]),
         WishState::Downloading { percent } => catalogue.text(
             locale,
@@ -125,6 +127,8 @@ mod tests {
         let states = [
             WishState::Available,
             WishState::NotHandedOver,
+            WishState::PartlyAvailable,
+            WishState::Waiting,
             WishState::ImportStuck,
             WishState::Downloading { percent: 40 },
             WishState::NotReleased { date: None },

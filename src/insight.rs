@@ -43,6 +43,11 @@ pub fn classify(wish: &Wish, ev: &Evidence, now: time::OffsetDateTime) -> WishSt
             },
         };
     }
+    // Below the queue rows: something coming down right now says more than
+    // "half of it is here".
+    if wish.media_status == 4 {
+        return WishState::PartlyAvailable;
+    }
     if let Some(movie) = ev.movie {
         if !movie.is_available {
             return WishState::NotReleased {
@@ -57,7 +62,15 @@ pub fn classify(wish: &Wish, ev: &Evidence, now: time::OffsetDateTime) -> WishSt
     if let Some(reason) = ev.known_reason {
         return WishState::Unsuitable(reason.clone());
     }
-    WishState::Searching
+    // THE LAST TWO ROWS ARE THE WHOLE POINT OF `Waiting`. "Still looking,
+    // nothing suitable so far" is only true where somebody looked: that is
+    // a film Radarr was actually asked about. Without film evidence -- a
+    // series, or any wish with no `[insight]` configured -- nothing was
+    // measured, and the honest answer is that it is on the list.
+    if ev.movie.is_some() {
+        return WishState::Searching;
+    }
+    WishState::Waiting
 }
 
 /// The earlier of the two release dates that still lies in the future,
@@ -306,9 +319,65 @@ mod tests {
         // `None`, so classify falls straight through the NotReleased row.
         let mut w = wish();
         w.kind = MediaKind::Tv;
+        assert_ne!(
+            classify(&w, &no_evidence(), time::OffsetDateTime::UNIX_EPOCH),
+            WishState::NotReleased { date: None }
+        );
+    }
+
+    #[test]
+    fn media_status_4_is_partly_available() {
+        let mut w = wish();
+        w.media_status = 4;
         assert_eq!(
             classify(&w, &no_evidence(), time::OffsetDateTime::UNIX_EPOCH),
-            WishState::Searching
+            WishState::PartlyAvailable
+        );
+    }
+
+    #[test]
+    fn a_queue_item_beats_partly_available() {
+        // Half a series being there says less than the part that is coming
+        // down right now: the queue row stands above the media status.
+        let mut w = wish();
+        w.media_status = 4;
+        let item = QueueItem {
+            arr_id: 42,
+            percent: 60,
+            state: QueueState::Downloading,
+        };
+        let ev = Evidence {
+            queue_item: Some(&item),
+            ..no_evidence()
+        };
+        assert_eq!(
+            classify(&w, &ev, time::OffsetDateTime::UNIX_EPOCH),
+            WishState::Downloading { percent: 60 }
+        );
+    }
+
+    #[test]
+    fn a_series_with_an_empty_queue_is_waiting_not_searching() {
+        // THE POINT OF `Waiting`. There is no film evidence for a series --
+        // no `movie()` and no interactive search exist on the Sonarr side --
+        // so "still looking, nothing suitable so far" would be a claim about
+        // a measurement that was never made. That is the very defect this
+        // whole feature removes; it must not be reintroduced by a default.
+        let mut w = wish();
+        w.kind = MediaKind::Tv;
+        assert_eq!(
+            classify(&w, &no_evidence(), time::OffsetDateTime::UNIX_EPOCH),
+            WishState::Waiting
+        );
+    }
+
+    #[test]
+    fn a_film_without_configured_insight_is_waiting_too() {
+        // Same reasoning for a movie when no [insight] is configured: the
+        // caller gathers no evidence, so there is nothing to claim.
+        assert_eq!(
+            classify(&wish(), &no_evidence(), time::OffsetDateTime::UNIX_EPOCH),
+            WishState::Waiting
         );
     }
 
@@ -340,10 +409,23 @@ mod tests {
     }
 
     #[test]
-    fn otherwise_is_searching() {
+    fn a_released_film_with_nothing_else_to_show_is_searching() {
+        // Radarr was asked, it has the film, it is out, nothing is in the
+        // queue and no attempt has failed: only NOW is "still looking"
+        // something that was actually measured.
         let w = wish();
+        let movie = ArrMovie {
+            is_available: true,
+            has_file: false,
+            digital_release: None,
+            physical_release: None,
+        };
+        let ev = Evidence {
+            movie: Some(&movie),
+            ..no_evidence()
+        };
         assert_eq!(
-            classify(&w, &no_evidence(), time::OffsetDateTime::UNIX_EPOCH),
+            classify(&w, &ev, time::OffsetDateTime::UNIX_EPOCH),
             WishState::Searching
         );
     }

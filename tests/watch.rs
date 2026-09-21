@@ -722,8 +722,13 @@ async fn a_wish_gone_from_seerr_loses_its_note() {
 /// 11. A series is judged by its queue entry alone. There is no such thing
 ///     as a "movie" in Sonarr, and an interactive search is a Radarr call --
 ///     neither may be attempted.
+///
+///     And with neither of them there is NO measurement behind "still
+///     looking, nothing suitable so far", so a stalled series is told
+///     nothing at all rather than a sentence the bot cannot back up. It
+///     classifies as `Waiting`, which is never announced unasked.
 #[tokio::test]
-async fn a_series_never_costs_a_movie_lookup_or_a_search() {
+async fn a_stalled_series_costs_no_lookup_and_is_told_nothing() {
     let h = harness(Setup {
         seerr: FakeSeerr {
             title: Some(TITLE.into()),
@@ -741,9 +746,11 @@ async fn a_series_never_costs_a_movie_lookup_or_a_search() {
     assert_eq!(h.arr.release_calls.load(Ordering::SeqCst), 0);
     assert_eq!(report.searches, 0);
     assert_eq!(
-        report.notices_sent, 1,
-        "nothing to wait for, so the general sentence goes out"
+        report.notices_sent, 0,
+        "nothing was measured, so there is nothing to claim"
     );
+    assert!(h.sent().is_empty());
+    assert!(h.notices.read().unwrap().note(1).unwrap().told.is_empty());
     assert_eq!(
         *h.arr.queue_kinds.lock().unwrap(),
         vec![MediaKind::Movie, MediaKind::Tv]

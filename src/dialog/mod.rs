@@ -813,8 +813,13 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
             state_text(&self.catalogue, locale, &WishState::Available)
         } else if wish.request_status == 4 || wish.arr_id.is_none() {
             state_text(&self.catalogue, locale, &WishState::NotHandedOver)
+        } else if wish.media_status == 4 {
+            state_text(&self.catalogue, locale, &WishState::PartlyAvailable)
         } else {
-            self.catalogue.text(locale, "status.waiting", &[])
+            // `WishState::Waiting` renders `status.waiting`: the same words
+            // this branch used to reach for directly, now from the one
+            // place that puts a state into words.
+            state_text(&self.catalogue, locale, &WishState::Waiting)
         }
     }
 
