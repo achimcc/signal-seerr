@@ -5,6 +5,7 @@ pub mod directory;
 pub mod i18n;
 pub mod insight;
 pub mod model;
+pub mod notices;
 pub mod secret;
 pub mod seerr;
 pub mod signal;

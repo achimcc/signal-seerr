@@ -3,6 +3,19 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Writes `bytes` to a sibling temp file and renames it onto `path`. A crash
+/// or a failure mid-write then leaves the previous contents of `path`
+/// untouched instead of a truncated file -- shared by every on-disk record
+/// in this crate (`State::save`, `notices::Notices::save`), one
+/// implementation instead of two.
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    let temp = path.with_extension("json.new");
+    std::fs::write(&temp, bytes).with_context(|| format!("cannot write {}", temp.display()))?;
+    std::fs::rename(&temp, path)
+        .with_context(|| format!("cannot rename onto {}", path.display()))?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Entry {
     pub authentik_username: String,
@@ -43,12 +56,7 @@ impl State {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("cannot create {}", parent.display()))?;
         }
-        let temp = path.with_extension("json.new");
-        std::fs::write(&temp, serde_json::to_vec_pretty(self)?)
-            .with_context(|| format!("cannot write {}", temp.display()))?;
-        std::fs::rename(&temp, path)
-            .with_context(|| format!("cannot rename onto {}", path.display()))?;
-        Ok(())
+        write_atomically(path, &serde_json::to_vec_pretty(self)?)
     }
 
     pub fn is_empty(&self) -> bool {
