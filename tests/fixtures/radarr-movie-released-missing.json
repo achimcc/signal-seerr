@@ -1,0 +1,16 @@
+{
+  "id": 111,
+  "title": "Film A",
+  "status": "released",
+  "isAvailable": true,
+  "hasFile": false,
+  "monitored": true,
+  "minimumAvailability": "released",
+  "inCinemas": "2019-08-29T00:00:00Z",
+  "digitalRelease": "2020-03-19T00:00:00Z",
+  "physicalRelease": "2020-04-27T00:00:00Z",
+  "qualityProfileId": 7,
+  "added": "2026-09-11T13:36:48Z",
+  "lastSearchTime": "2026-09-21T18:48:07Z",
+  "tmdbId": 100000
+}

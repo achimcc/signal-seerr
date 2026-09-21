@@ -1,0 +1,14 @@
+{
+  "id": 115,
+  "title": "Film A",
+  "status": "announced",
+  "isAvailable": false,
+  "hasFile": false,
+  "monitored": true,
+  "minimumAvailability": "released",
+  "inCinemas": "2026-11-04T00:00:00Z",
+  "qualityProfileId": 9,
+  "added": "2026-09-13T21:18:15Z",
+  "lastSearchTime": "2026-09-20T21:27:11Z",
+  "tmdbId": 100000
+}

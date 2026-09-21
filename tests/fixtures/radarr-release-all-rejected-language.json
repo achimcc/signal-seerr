@@ -1,0 +1,826 @@
+[
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 720p, DD, HD Bluray Tier 01, Not German or English have score -33195 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-720p"
+      }
+    },
+    "size": 9229778834,
+    "protocol": "usenet",
+    "customFormatScore": -33195
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 720p, DD, HD Bluray Tier 02, Not German or English have score -33245 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-720p"
+      }
+    },
+    "size": 7416037531,
+    "protocol": "torrent",
+    "customFormatScore": -33245
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, AMZN, DD+, Not German or English, WEB Tier 01 have score -33250 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 10098086604,
+    "protocol": "usenet",
+    "customFormatScore": -33250
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, AMZN, DD+, Not German or English, WEB Tier 01 have score -33250 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 9780361357,
+    "protocol": "usenet",
+    "customFormatScore": -33250
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 720p, AMZN, DD+, Not German or English, WEB Tier 01 have score -33295 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBRip-720p"
+      }
+    },
+    "size": 5251918117,
+    "protocol": "usenet",
+    "customFormatScore": -33295
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 720p, AMZN, DD+, Not German or English, WEB Tier 01 have score -33295 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-720p"
+      }
+    },
+    "size": 5329565120,
+    "protocol": "usenet",
+    "customFormatScore": -33295
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, Not German or English have score -34950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 19799209858,
+    "protocol": "usenet",
+    "customFormatScore": -34950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, Bad Dual Groups, DD, Not German or English have score -34950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 7335105116,
+    "protocol": "usenet",
+    "customFormatScore": -34950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, Bad Dual Groups, DD, Not German or English have score -34950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 7334991060,
+    "protocol": "usenet",
+    "customFormatScore": -34950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, AMZN, Not German or English have score -34950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4934359149,
+    "protocol": "usenet",
+    "customFormatScore": -34950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, AMZN, Not German or English have score -34950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4773440673,
+    "protocol": "usenet",
+    "customFormatScore": -34950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, Not German or English have score -34950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3025920050,
+    "protocol": "usenet",
+    "customFormatScore": -34950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, Not German or English have score -34950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 19215025032,
+    "protocol": "torrent",
+    "customFormatScore": -34950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, DD, Not German or English have score -34950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 10436770529,
+    "protocol": "torrent",
+    "customFormatScore": -34950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, Bad Dual Groups, DD, Not German or English have score -34950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 6977363610,
+    "protocol": "torrent",
+    "customFormatScore": -34950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 720p, Not German or English have score -34995 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-720p"
+      }
+    },
+    "size": 7008292718,
+    "protocol": "usenet",
+    "customFormatScore": -34995
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 720p, Not German or English have score -34995 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-720p"
+      }
+    },
+    "size": 7034739092,
+    "protocol": "usenet",
+    "customFormatScore": -34995
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 720p, Bad Dual Groups, DD, Not German or English have score -34995 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-720p"
+      }
+    },
+    "size": 4790943585,
+    "protocol": "usenet",
+    "customFormatScore": -34995
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 720p, Bad Dual Groups, DD, Not German or English have score -34995 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-720p"
+      }
+    },
+    "size": 4790943585,
+    "protocol": "usenet",
+    "customFormatScore": -34995
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 720p, Not German or English have score -34995 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-720p"
+      }
+    },
+    "size": 6518306988,
+    "protocol": "torrent",
+    "customFormatScore": -34995
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 720p, Not German or English have score -34995 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-720p"
+      }
+    },
+    "size": 6485400616,
+    "protocol": "torrent",
+    "customFormatScore": -34995
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, LQ, Not German or English have score -69950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 6966414950,
+    "protocol": "usenet",
+    "customFormatScore": -69950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, LQ, Not German or English, x265 (HD), x265 (no HDR/DV) have score -69950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 2375815603,
+    "protocol": "usenet",
+    "customFormatScore": -69950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, LQ, Not German or English have score -69950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 6109159869,
+    "protocol": "torrent",
+    "customFormatScore": -69950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, LQ, Not German or English have score -69950 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 6110498059,
+    "protocol": "torrent",
+    "customFormatScore": -69950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, BR-DISK, Not German or English have score -69950 below Movie's profile minimum 10000",
+      "BR-DISK is not wanted in profile"
+    ],
+    "languages": [
+      {
+        "id": 30,
+        "name": "Portuguese (Brazil)"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "BR-DISK"
+      }
+    },
+    "size": 51654912215,
+    "protocol": "usenet",
+    "customFormatScore": -69950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, BR-DISK, Not German or English have score -69950 below Movie's profile minimum 10000",
+      "BR-DISK is not wanted in profile"
+    ],
+    "languages": [
+      {
+        "id": 30,
+        "name": "Portuguese (Brazil)"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "BR-DISK"
+      }
+    },
+    "size": 51648603228,
+    "protocol": "usenet",
+    "customFormatScore": -69950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, BR-DISK, Not German or English have score -69950 below Movie's profile minimum 10000",
+      "BR-DISK is not wanted in profile"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "BR-DISK"
+      }
+    },
+    "size": 45982873886,
+    "protocol": "usenet",
+    "customFormatScore": -69950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, DTS-HD MA, Not German or English have score -34950 below Movie's profile minimum 10000",
+      "Remux-1080p is not wanted in profile"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Remux-1080p"
+      }
+    },
+    "size": 43251423139,
+    "protocol": "usenet",
+    "customFormatScore": -34950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, DTS-HD MA, Not German or English have score -34950 below Movie's profile minimum 10000",
+      "Remux-1080p is not wanted in profile"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Remux-1080p"
+      }
+    },
+    "size": 36327233267,
+    "protocol": "torrent",
+    "customFormatScore": -34950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats 1080p, DTS-HD MA, LQ, Not German or English have score -69950 below Movie's profile minimum 10000",
+      "Remux-1080p is not wanted in profile"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Remux-1080p"
+      }
+    },
+    "size": 32957209155,
+    "protocol": "torrent",
+    "customFormatScore": -69950
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats Not German or English have score -35000 below Movie's profile minimum 10000",
+      "Bluray-576p is not wanted in profile"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-576p"
+      }
+    },
+    "size": 3360811909,
+    "protocol": "torrent",
+    "customFormatScore": -35000
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats Not German or English have score -35000 below Movie's profile minimum 10000",
+      "Bluray-480p is not wanted in profile"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 1128225942,
+    "protocol": "usenet",
+    "customFormatScore": -35000
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats Not German or English have score -35000 below Movie's profile minimum 10000",
+      "Bluray-480p is not wanted in profile"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 1046689625,
+    "protocol": "torrent",
+    "customFormatScore": -35000
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats Not German or English have score -35000 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Unknown"
+      }
+    },
+    "size": 4624241179,
+    "protocol": "usenet",
+    "customFormatScore": -35000
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Custom Formats Not German or English have score -35000 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Unknown"
+      }
+    },
+    "size": 4381110064,
+    "protocol": "usenet",
+    "customFormatScore": -35000
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "43.7 GB is larger than maximum allowed 12.8 GB (for Film A)",
+      "Custom Formats Not German or English have score -35000 below Movie's profile minimum 10000"
+    ],
+    "languages": [
+      {
+        "id": 18,
+        "name": "Portuguese"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Unknown"
+      }
+    },
+    "size": 46893487488,
+    "protocol": "usenet",
+    "customFormatScore": -35000
+  }
+]
