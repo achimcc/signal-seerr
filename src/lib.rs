@@ -3,6 +3,7 @@ pub mod config;
 pub mod dialog;
 pub mod directory;
 pub mod i18n;
+pub mod insight;
 pub mod model;
 pub mod secret;
 pub mod seerr;

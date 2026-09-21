@@ -68,3 +68,71 @@ pub struct Wish {
     /// `requestedBy.jellyfinUsername` -- the one identity source (see CLAUDE.md).
     pub requested_by: Option<String>,
 }
+
+/// Why a wish's search never found a suitable release. Comes only from
+/// structured fields (Radarr's `languages`, a fixed sentence in
+/// `rejections`), never from a custom format's own name -- see
+/// `insight::reason_from`. Stored on disk (the notices file), hence serde.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "class", content = "detail", rename_all = "snake_case")]
+pub enum Reason {
+    NothingExists,
+    OnlyInLanguages(Vec<String>),
+    TooLarge,
+    TooSmall,
+    WrongQuality,
+    Otherwise,
+}
+
+/// One state a person can be told about, derived from a wish and what is
+/// currently known about it in Radarr/Sonarr. See `insight::classify`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WishState {
+    Available,
+    NotHandedOver,
+    ImportStuck,
+    Downloading { percent: u8 },
+    NotReleased { date: Option<time::Date> },
+    DownloadFailed,
+    Unsuitable(Reason),
+    Searching,
+}
+
+impl WishState {
+    /// The key under which "already told" is remembered; None = never announced unasked.
+    pub fn notice_class(&self) -> Option<&'static str> {
+        match self {
+            WishState::Searching | WishState::Unsuitable(_) => Some("unsuitable"),
+            WishState::DownloadFailed => Some("download_failed"),
+            WishState::ImportStuck => Some("import_stuck"),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reason_only_in_languages_round_trips_through_json() {
+        let reason = Reason::OnlyInLanguages(vec!["Portuguese".to_string()]);
+        let json = serde_json::to_string(&reason).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Reason>(&json).unwrap(),
+            reason,
+            "round trip of {json}"
+        );
+    }
+
+    #[test]
+    fn reason_unit_variant_round_trips_through_json() {
+        let reason = Reason::NothingExists;
+        let json = serde_json::to_string(&reason).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Reason>(&json).unwrap(),
+            reason,
+            "round trip of {json}"
+        );
+    }
+}
