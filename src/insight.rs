@@ -123,7 +123,9 @@ fn has_pattern(release: &Release, pattern: &str) -> bool {
     release.rejections.iter().any(|r| r.contains(pattern))
 }
 
-/// The languages actually offered, most common first. `"Portuguese
+/// The languages actually offered, most common first, capped at the two
+/// most frequent -- `Reason::OnlyInLanguages` names at most two, never the
+/// whole spread of a search that missed on every count. `"Portuguese
 /// (Brazil)"` is counted separately from `"Portuguese"` -- that is how
 /// Radarr sends it, and merging them would misrepresent what was searched.
 fn languages_by_frequency(releases: &[Release]) -> Vec<String> {
@@ -135,7 +137,7 @@ fn languages_by_frequency(releases: &[Release]) -> Vec<String> {
         }
     }
     counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-    counts.into_iter().map(|(name, _)| name).collect()
+    counts.into_iter().map(|(name, _)| name).take(2).collect()
 }
 
 #[cfg(test)]
@@ -367,6 +369,29 @@ mod tests {
             Reason::OnlyInLanguages(l) => {
                 assert!(!l.is_empty() && l.len() <= 2);
                 assert_eq!(l[0], "Portuguese");
+            }
+            other => panic!("expected a language reason, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn only_in_languages_caps_at_the_two_most_frequent() {
+        // Three distinct non-wanted languages, none of them "German": five
+        // releases in Portuguese, three in Spanish, one in French. The
+        // reason may name at most two -- the two most frequent, in
+        // frequency order -- never all three.
+        let wanted = vec!["German".to_string()];
+        let mut releases = Vec::new();
+        for _ in 0..5 {
+            releases.push(release(true, &[], &["Portuguese"]));
+        }
+        for _ in 0..3 {
+            releases.push(release(true, &[], &["Spanish"]));
+        }
+        releases.push(release(true, &[], &["French"]));
+        match reason_from(&releases, Some(&wanted)) {
+            Reason::OnlyInLanguages(l) => {
+                assert_eq!(l, vec!["Portuguese".to_string(), "Spanish".to_string()]);
             }
             other => panic!("expected a language reason, got {other:?}"),
         }
