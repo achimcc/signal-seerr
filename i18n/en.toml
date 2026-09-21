@@ -28,6 +28,7 @@ already = "✓ already there"
 
 [request]
 placed = "{title} is on the list. I'll let you know once it's here.\nWrong one? /withdraw {id} takes it off again."
+placed_not_released = "{title} is on the list. It hasn't come out for home viewing yet — I'll let you know as soon as it's here.\nWrong one? /withdraw {id} takes it off again."
 placed_with_profile = "{title} is on the list ({profile}). I'll let you know once it's here.\nWrong one? /withdraw {id} takes it off again."
 profile_question = "{title} — which version? Answer with the number."
 already = "{title} is already there."
@@ -38,13 +39,55 @@ unknown_id = "I don't have a request from you with the number {id}."
 [status]
 empty = "There's nothing of yours on the way right now."
 line = "{id}: {title} — {state}"
+untitled = "(untitled)"
 waiting = "waiting"
-fetching = "fetching"
-available = "available"
+available = "here"
+not_handed_over = "I couldn't put it on the list"
+import_stuck = "downloaded, but stuck on the last step"
+downloading = "downloading, {percent} %"
+not_released = "not out for home viewing yet"
+not_released_date = "not out for home viewing yet (expected from {date})"
+download_failed = "one attempt failed, I'm still looking"
+searching = "still looking, nothing suitable so far"
+nothing_exists = "nowhere to be found so far"
+only_in_languages = "so far only available in {languages}"
+too_large = "so far only in versions we don't take (too big)"
+too_small = "so far only in versions we don't take (too small)"
+wrong_quality = "so far only in versions we don't take (picture quality)"
+otherwise = "so far only in versions we don't take"
+
+[notice]
+unsuitable = "\"{title}\" {state}. I'm still looking and will let you know when it's here."
+unsuitable_hint = "If a different version would do: /withdraw {id}, then ask for it again and pick another version."
+download_failed = "One attempt at \"{title}\" failed. I'm still looking."
+import_stuck = "\"{title}\" is downloaded but stuck on the last step. Somebody needs to look at that."
 
 [available]
 ready = "\"{title}\" is here.\n{url}"
-failed = "I couldn't track down \"{title}\"."
+failed = "I couldn't put \"{title}\" on the list. That's the technology at this end, not the film — try again in a few minutes."
+
+# Radarr's own English language names, as they arrive in a release's
+# `languages` field. A name with no entry here is shown as Radarr sends it --
+# that is an ordinary outcome, not a missing translation, since Radarr knows
+# far more languages than a chat bot needs to name.
+[language]
+German = "German"
+English = "English"
+French = "French"
+Spanish = "Spanish"
+Italian = "Italian"
+Portuguese = "Portuguese"
+"Portuguese (Brazil)" = "Portuguese (Brazil)"
+Japanese = "Japanese"
+Korean = "Korean"
+Chinese = "Chinese"
+Russian = "Russian"
+Dutch = "Dutch"
+Swedish = "Swedish"
+Danish = "Danish"
+Norwegian = "Norwegian"
+Polish = "Polish"
+Turkish = "Turkish"
 
 [error]
 unknown_sender = "I don't know you yet. Add your Signal name at {url} under \"Your account\", then I'll get back to you."

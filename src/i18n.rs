@@ -44,6 +44,16 @@ impl Catalogue {
         self.table(locale).keys().cloned().collect()
     }
 
+    /// The template for `key`, or `None` -- and no warning either way.
+    ///
+    /// For the lookups where a miss is an ordinary outcome rather than a
+    /// typo: the `[language]` table names the handful of languages worth
+    /// translating, and Radarr knows hundreds. `text` is the right call
+    /// everywhere else, precisely because it complains.
+    pub fn lookup(&self, locale: Locale, key: &str) -> Option<&str> {
+        self.table(locale).get(key).map(|s| s.as_str())
+    }
+
     /// Returns the key itself when it is unknown. Loud enough to notice in a
     /// chat, quiet enough not to crash a running bot over a typo.
     pub fn text(&self, locale: Locale, key: &str, args: &[(&str, &str)]) -> String {

@@ -195,6 +195,10 @@ async fn main() -> Result<()> {
             config.settings_url.clone(),
             config.operator_name.clone(),
             config.quality_profiles.clone(),
+            // Task 8 hands the real ones in; until then the dialog works
+            // from Seerr alone, which is exactly the no-[insight] case.
+            None,
+            None,
         );
         tokio::spawn(async move {
             tracing::info!("signal-seerr is up");

@@ -1,9 +1,11 @@
+use signal_seerr::arr::{ArrMovie, HistoryEvent, Insight, QueueItem};
 use signal_seerr::dialog::Dialog;
 use signal_seerr::directory::{Directory, Member};
 use signal_seerr::i18n::{Catalogue, Locale};
 use signal_seerr::model::*;
+use signal_seerr::notices::Notices;
 use signal_seerr::seerr::Requests;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 
 pub struct FakeDirectory(pub Vec<(Aci, Member)>);
 impl Directory for FakeDirectory {
@@ -31,6 +33,18 @@ pub struct FakeSeerr {
     pub asked_profile: Mutex<Option<i64>>,
     /// What `profile_of` reads back afterwards.
     pub readback: Option<i64>,
+    /// What `pending` answers.
+    pub wishes: Vec<Wish>,
+    /// Every `SeerrUserId` `pending` was asked with, in order. Identity is
+    /// the point: a status answer must only ever be about the sender.
+    pub pending_calls: Mutex<Vec<SeerrUserId>>,
+    /// What `title_for` answers, and how often it was asked at all -- a
+    /// title that was already remembered must not cost a lookup.
+    pub title: Option<String>,
+    pub title_for_calls: Mutex<usize>,
+    /// Authentik username -> Seerr id. Empty means "everybody is 12", so
+    /// every test written before this behaves as it always did.
+    pub users: Vec<(String, i64)>,
 }
 
 #[async_trait::async_trait]
@@ -61,8 +75,14 @@ impl Requests for FakeSeerr {
             .map(|c| c.to_vec())
             .unwrap_or_default())
     }
-    async fn user_id(&self, _u: &str) -> anyhow::Result<Option<SeerrUserId>> {
-        Ok(Some(SeerrUserId(12)))
+    async fn user_id(&self, u: &str) -> anyhow::Result<Option<SeerrUserId>> {
+        let id = self
+            .users
+            .iter()
+            .find(|(name, _)| name == u)
+            .map(|(_, id)| *id)
+            .unwrap_or(12);
+        Ok(Some(SeerrUserId(id)))
     }
     async fn quality_profiles(&self, _kind: MediaKind) -> anyhow::Result<Vec<QualityProfile>> {
         Ok(self.profiles.clone())
@@ -84,8 +104,9 @@ impl Requests for FakeSeerr {
             .push((hit.tmdb_id, seasons, as_user));
         Ok(1849)
     }
-    async fn pending(&self, _as_user: SeerrUserId) -> anyhow::Result<Vec<Wish>> {
-        Ok(vec![])
+    async fn pending(&self, as_user: SeerrUserId) -> anyhow::Result<Vec<Wish>> {
+        self.pending_calls.lock().unwrap().push(as_user);
+        Ok(self.wishes.clone())
     }
     async fn open_wishes(&self) -> anyhow::Result<Vec<Wish>> {
         Ok(vec![])
@@ -99,7 +120,53 @@ impl Requests for FakeSeerr {
         Ok(None)
     }
     async fn title_for(&self, _kind: MediaKind, _tmdb_id: i64) -> anyhow::Result<Option<String>> {
-        Ok(None)
+        *self.title_for_calls.lock().unwrap() += 1;
+        Ok(self.title.clone())
+    }
+}
+
+/// A read-only Radarr/Sonarr stand-in. Note what it does NOT implement:
+/// `ReleaseSearch`. `Dialog` is only ever handed `Insight`, so by type no
+/// chat command can set off a search at every indexer -- a fake that offered
+/// both would quietly give that property away.
+#[derive(Default)]
+pub struct FakeInsight {
+    /// arr id -> what Radarr says about that film.
+    pub movies: Vec<(i64, ArrMovie)>,
+    pub queue: Vec<QueueItem>,
+    pub event: Option<HistoryEvent>,
+    /// Every call fails. An extra source being down must never cost a wish
+    /// or a status answer.
+    pub fail: bool,
+    pub movie_calls: Mutex<Vec<i64>>,
+    pub queue_calls: Mutex<Vec<MediaKind>>,
+}
+
+#[async_trait::async_trait]
+impl Insight for FakeInsight {
+    async fn movie(&self, id: i64) -> anyhow::Result<ArrMovie> {
+        self.movie_calls.lock().unwrap().push(id);
+        if self.fail {
+            anyhow::bail!("radarr is down");
+        }
+        self.movies
+            .iter()
+            .find(|(known, _)| *known == id)
+            .map(|(_, movie)| movie.clone())
+            .ok_or_else(|| anyhow::anyhow!("radarr knows no movie {id}"))
+    }
+    async fn queue(&self, kind: MediaKind) -> anyhow::Result<Vec<QueueItem>> {
+        self.queue_calls.lock().unwrap().push(kind);
+        if self.fail {
+            anyhow::bail!("radarr is down");
+        }
+        Ok(self.queue.clone())
+    }
+    async fn last_event(&self, _kind: MediaKind, _id: i64) -> anyhow::Result<Option<HistoryEvent>> {
+        if self.fail {
+            anyhow::bail!("radarr is down");
+        }
+        Ok(self.event)
     }
 }
 
@@ -146,6 +213,8 @@ fn dialog(seerr: FakeSeerr, known: bool) -> Dialog<FakeSeerr, FakeDirectory> {
         settings_url(),
         operator_name(),
         Vec::new(),
+        None,
+        None,
     )
 }
 
@@ -193,6 +262,8 @@ async fn a_known_account_without_the_media_group_gets_a_different_sentence() {
         settings_url(),
         operator_name(),
         Vec::new(),
+        None,
+        None,
     );
     let out = d.handle(&aci, "blade runner").await;
     // The human is right, the group is missing. The other sentence would send
@@ -583,6 +654,8 @@ async fn status_lists_what_is_still_on_its_way() {
         settings_url(),
         operator_name(),
         Vec::new(),
+        None,
+        None,
     );
 
     let out = d.handle(&aci, "/status").await;
@@ -675,6 +748,8 @@ async fn weg_on_somebody_elses_request_reports_it_as_not_yours() {
         settings_url(),
         operator_name(),
         Vec::new(),
+        None,
+        None,
     );
     let out = d.handle(&aci, "/weg 1849").await;
     assert!(
@@ -1038,6 +1113,8 @@ async fn the_configured_order_wins_over_seerrs_own() {
             "Gibt es nicht".to_string(),
             "Dual Language, sonst Deutsch (1080p)".to_string(),
         ],
+        None,
+        None,
     );
 
     d.handle(&aci, "blade runner").await;
@@ -1057,4 +1134,306 @@ async fn the_configured_order_wins_over_seerrs_own() {
     // Und "1" ist jetzt die Rarität -- id 11, nicht 7.
     d.handle(&aci, "1").await;
     assert_eq!(*d.seerr_ref().asked_profile.lock().unwrap(), Some(11));
+}
+
+// ===========================================================================
+// /status tells the truth (Task 7)
+//
+// Every expected sentence is read OUT OF THE CATALOGUE rather than written
+// out here: these are the texts a wording change is most likely to touch,
+// and a test that pins the literal sentence is a trap for that change (see
+// CLAUDE.md). What is under test is which STATE a wish is rendered as, not
+// how that state happens to read this week.
+// ===========================================================================
+
+/// The fixed "now" every status test is driven with, so a wish's age is a
+/// property of the test and not of the day it runs on.
+fn now() -> time::OffsetDateTime {
+    time::macros::datetime!(2026-09-21 12:00:00 UTC)
+}
+
+/// An open film wish: handed over to Radarr (`arr_id`), approved, not yet
+/// available.
+fn wish(id: i64, arr_id: Option<i64>) -> Wish {
+    Wish {
+        id,
+        kind: MediaKind::Movie,
+        tmdb_id: 4321,
+        request_status: 2,
+        media_status: 3,
+        arr_id,
+        created_at: now(),
+        profile_name: None,
+        requested_by: None,
+    }
+}
+
+fn arr_movie(is_available: bool) -> ArrMovie {
+    ArrMovie {
+        is_available,
+        has_file: false,
+        digital_release: None,
+        physical_release: None,
+    }
+}
+
+fn silvia() -> Member {
+    Member {
+        authentik_username: "silvia".into(),
+        ..member()
+    }
+}
+
+/// A dialog that knows `aaaa` (robert) and `eeee` (silvia), with the two
+/// optional neighbours this task adds and a fixed clock.
+fn status_dialog(
+    seerr: FakeSeerr,
+    insight: Option<Arc<dyn Insight>>,
+    notices: Option<Notices>,
+) -> Dialog<FakeSeerr, FakeDirectory> {
+    let dir = FakeDirectory(vec![
+        (Aci("aaaa".into()), member()),
+        (Aci("eeee".into()), silvia()),
+    ]);
+    Dialog::new(
+        seerr,
+        dir,
+        Catalogue::load(),
+        settings_url(),
+        operator_name(),
+        Vec::new(),
+        insight,
+        notices.map(|n| Arc::new(RwLock::new(n))),
+    )
+    .with_clock(now())
+}
+
+/// (a) A film that is not out yet is said to be not out yet -- where the bot
+/// used to answer "wird geholt" for every open wish alike, including one
+/// nobody could fetch at all.
+///
+/// Two open wishes, and the queue is read ONCE for both: the queue is a
+/// property of the whole *arr, not of a wish, and asking per wish would turn
+/// a five-line status into five round trips.
+#[tokio::test]
+async fn status_names_a_film_that_is_not_released_yet() {
+    let seerr = FakeSeerr {
+        wishes: vec![wish(1849, Some(42)), wish(1850, Some(43))],
+        title: Some("Blade Runner 2049".into()),
+        ..Default::default()
+    };
+    let insight = Arc::new(FakeInsight {
+        movies: vec![(42, arr_movie(false)), (43, arr_movie(false))],
+        ..Default::default()
+    });
+    let mut d = status_dialog(seerr, Some(insight.clone()), None);
+
+    let out = d.handle(&Aci("aaaa".into()), "/status").await.join("\n");
+
+    let catalogue = Catalogue::load();
+    assert!(
+        out.contains(&catalogue.text(Locale::De, "status.not_released", &[])),
+        "got: {out}"
+    );
+    // The sentence status.fetching used to hold, now gone from both
+    // catalogues. Written out because the key it came from no longer exists.
+    assert!(
+        !out.contains("wird geholt"),
+        "the old blanket answer must be gone: {out}"
+    );
+    assert_eq!(
+        insight.queue_calls.lock().unwrap().len(),
+        1,
+        "the queue is read once per /status, not once per wish"
+    );
+}
+
+/// (b) Identity: a status answer is only ever about the sender, and a number
+/// after the command does not turn it into a lookup of somebody else's wish.
+#[tokio::test]
+async fn status_only_ever_asks_about_the_senders_own_wishes() {
+    let seerr = FakeSeerr {
+        wishes: vec![wish(24, Some(5))],
+        title: Some("Arrival".into()),
+        users: vec![("robert".into(), 12), ("silvia".into(), 77)],
+        ..Default::default()
+    };
+    let insight = Arc::new(FakeInsight {
+        movies: vec![(5, arr_movie(true))],
+        ..Default::default()
+    });
+    let mut d = status_dialog(seerr, Some(insight.clone()), None);
+    let b = Aci("eeee".into());
+
+    d.handle(&b, "/status").await;
+    assert_eq!(
+        d.seerr_ref().pending_calls.lock().unwrap().as_slice(),
+        [SeerrUserId(77)],
+        "B's own Seerr id, and nobody else's"
+    );
+
+    // 24 is a wish id, not B's. Today "/status 24" is not the /status
+    // command at all (the match is on the whole message) and ends up a
+    // search for that text -- whatever it is treated as, it must not become
+    // a lookup: no second `pending`, and no question to Radarr about 24.
+    d.handle(&b, "/status 24").await;
+    assert_eq!(
+        d.seerr_ref().pending_calls.lock().unwrap().as_slice(),
+        [SeerrUserId(77)],
+        "a number after /status must not fetch anybody's wish list again"
+    );
+    assert_eq!(
+        insight.movie_calls.lock().unwrap().as_slice(),
+        [5],
+        "only the arr id of B's own wish was ever asked about"
+    );
+}
+
+/// (c) What is listed: everything still open, plus what became available
+/// within the last seven days -- a wish that arrived a month ago is not news.
+#[tokio::test]
+async fn status_lists_open_wishes_and_only_recently_available_ones() {
+    let old = time::Duration::days(30);
+    let recent = time::Duration::days(1);
+    let seerr = FakeSeerr {
+        wishes: vec![
+            Wish {
+                created_at: now() - old,
+                ..wish(1, None)
+            },
+            Wish {
+                media_status: 5,
+                created_at: now() - old,
+                ..wish(2, None)
+            },
+            Wish {
+                media_status: 5,
+                created_at: now() - recent,
+                ..wish(3, None)
+            },
+        ],
+        title: Some("Arrival".into()),
+        ..Default::default()
+    };
+    let mut d = status_dialog(seerr, None, None);
+
+    let out = d.handle(&Aci("aaaa".into()), "/status").await.join("\n");
+
+    let ids: Vec<&str> = out
+        .lines()
+        .map(|line| line.split(':').next().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        ["1", "3"],
+        "the open one and the fresh one, not the month-old arrival: {out}"
+    );
+}
+
+/// (d) The title comes from what is already remembered when there is one,
+/// and only then from Seerr -- a lookup per line is what the notices file
+/// exists to spare.
+#[tokio::test]
+async fn a_remembered_title_is_used_and_costs_no_lookup() {
+    let mut notices = Notices::default();
+    notices.note_mut(1849, now()).title = Some("Arrival".into());
+    let seerr = FakeSeerr {
+        wishes: vec![wish(1849, None), wish(1850, None)],
+        title: Some("Blade Runner 2049".into()),
+        ..Default::default()
+    };
+    let mut d = status_dialog(seerr, None, Some(notices));
+
+    let out = d.handle(&Aci("aaaa".into()), "/status").await.join("\n");
+
+    assert!(out.contains("Arrival"), "got: {out}");
+    assert!(out.contains("Blade Runner 2049"), "got: {out}");
+    assert_eq!(
+        *d.seerr_ref().title_for_calls.lock().unwrap(),
+        1,
+        "only the wish with no remembered title may cost a lookup"
+    );
+}
+
+/// (e) Without any Radarr insight the bot says nothing about a search it
+/// knows nothing about: the wish is waiting, not "being looked for".
+#[tokio::test]
+async fn without_insight_the_bot_does_not_claim_to_be_searching() {
+    let seerr = FakeSeerr {
+        wishes: vec![wish(1849, Some(42))],
+        title: Some("Arrival".into()),
+        ..Default::default()
+    };
+    let mut d = status_dialog(seerr, None, None);
+
+    let out = d.handle(&Aci("aaaa".into()), "/status").await.join("\n");
+
+    let catalogue = Catalogue::load();
+    assert!(
+        out.contains(&catalogue.text(Locale::De, "status.waiting", &[])),
+        "got: {out}"
+    );
+    assert!(
+        !out.contains(&catalogue.text(Locale::De, "status.searching", &[])),
+        "a claim about a search nobody measured: {out}"
+    );
+}
+
+/// (f) The confirmation says so when the film is not out yet -- the one
+/// question everybody asks a week later, answered at the moment of asking.
+#[tokio::test]
+async fn placing_a_film_that_is_not_out_yet_says_so_in_the_confirmation() {
+    let seerr = FakeSeerr {
+        hits: vec![movie(1, "Blade Runner 2049")],
+        wishes: vec![wish(1849, Some(7))],
+        ..Default::default()
+    };
+    let insight = Arc::new(FakeInsight {
+        movies: vec![(7, arr_movie(false))],
+        ..Default::default()
+    });
+    let mut d = status_dialog(seerr, Some(insight), None);
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "blade runner").await;
+    let out = d.handle(&aci, "1").await.join("\n");
+
+    let expected = Catalogue::load().text(
+        Locale::De,
+        "request.placed_not_released",
+        &[("title", "Blade Runner 2049"), ("id", "1849")],
+    );
+    assert_eq!(out, expected);
+}
+
+/// ... and a wish never fails, waits or changes its wording because that
+/// extra question could not be answered.
+#[tokio::test]
+async fn a_failing_lookup_leaves_the_ordinary_confirmation() {
+    let seerr = FakeSeerr {
+        hits: vec![movie(1, "Blade Runner 2049")],
+        wishes: vec![wish(1849, Some(7))],
+        ..Default::default()
+    };
+    let insight = Arc::new(FakeInsight {
+        fail: true,
+        ..Default::default()
+    });
+    let mut d = status_dialog(seerr, Some(insight), None);
+    let aci = Aci("aaaa".into());
+
+    d.handle(&aci, "blade runner").await;
+    let out = d.handle(&aci, "1").await.join("\n");
+
+    let expected = Catalogue::load().text(
+        Locale::De,
+        "request.placed",
+        &[("title", "Blade Runner 2049"), ("id", "1849")],
+    );
+    assert_eq!(out, expected);
+    assert_eq!(
+        d.seerr_ref().placed.lock().unwrap().len(),
+        1,
+        "the wish itself went out all the same"
+    );
 }

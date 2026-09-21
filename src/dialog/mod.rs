@@ -1,9 +1,20 @@
+mod status;
+
+pub use status::state_text;
+
+use crate::arr::{Insight, QueueItem};
 use crate::directory::Directory;
 use crate::i18n::{Catalogue, Locale};
-use crate::model::{Aci, Hit, MediaKind, QualityProfile, Seasons, SeerrUserId};
+use crate::insight::{classify, Evidence};
+use crate::model::{
+    Aci, Hit, MediaKind, QualityProfile, Reason, Seasons, SeerrUserId, Wish, WishState,
+};
+use crate::notices::Notices;
 use crate::seerr::Requests;
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
+use time::OffsetDateTime;
 
 const PAGE: usize = 5;
 /// After this, a bare "2" is a search for "2" again.
@@ -35,6 +46,49 @@ fn strip_command<'a>(text: &'a str, lowered: &str, prefixes: &[&str]) -> Option<
 /// this needs neither a real sleep nor a paused clock.
 fn prune_stale_strangers(told: &mut HashMap<Aci, Instant>, now: Instant) {
     told.retain(|_, at| now.duration_since(*at) < STRANGER_QUIET);
+}
+
+/// How long something that has arrived still counts as news on `/status`.
+const STILL_NEWS: time::Duration = time::Duration::days(7);
+
+/// Whether this wish belongs in the answer: everything still on its way, and
+/// what arrived recently enough to be worth repeating. A film somebody asked
+/// for a month ago and has long since watched is not "on the way".
+fn is_shown(wish: &Wish, now: OffsetDateTime) -> bool {
+    wish.media_status != 5 || wish.created_at > now - STILL_NEWS
+}
+
+/// Whether anything Radarr or Sonarr could say would change the answer.
+///
+/// `classify` returns `Available` or `NotHandedOver` before it looks at any
+/// evidence, so asking about those wishes would cost a round trip and change
+/// nothing.
+fn needs_evidence(wish: &Wish) -> bool {
+    wish.media_status != 5 && wish.request_status != 4 && wish.arr_id.is_some()
+}
+
+/// The queues read for this one `/status` call. `None` means "not read" --
+/// either nothing of that kind was on the list, or the call failed.
+#[derive(Default)]
+struct Queues {
+    movie: Option<Vec<QueueItem>>,
+    tv: Option<Vec<QueueItem>>,
+}
+
+impl Queues {
+    fn slot(&mut self, kind: MediaKind) -> &mut Option<Vec<QueueItem>> {
+        match kind {
+            MediaKind::Movie => &mut self.movie,
+            MediaKind::Tv => &mut self.tv,
+        }
+    }
+
+    fn of(&self, kind: MediaKind) -> Option<&[QueueItem]> {
+        match kind {
+            MediaKind::Movie => self.movie.as_deref(),
+            MediaKind::Tv => self.tv.as_deref(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -81,11 +135,29 @@ pub struct Dialog<R: Requests, D: Directory> {
     /// that no *arr knows are dropped with a line in the journal; an empty
     /// list means "offer whatever Seerr lists, in Seerr's order".
     quality_profiles: Vec<String>,
+    /// The read-only half of the *arr client, when one is configured.
+    ///
+    /// `Insight`, and deliberately NEVER `ReleaseSearch`: the dialog answers
+    /// whoever writes to the bot, so by type no chat message can set off an
+    /// interactive search at every indexer. `None` means no [insight]
+    /// section -- then a wish's state comes from Seerr alone, and the bot
+    /// claims nothing about a search it cannot see.
+    insight: Option<Arc<dyn Insight>>,
+    /// What has already been said about which wish, and what was found out
+    /// about it. The dialog only ever READS this; the watcher writes it.
+    notices: Option<Arc<RwLock<Notices>>>,
+    /// A fixed "now" for the tests. `None` -- always, in production -- means
+    /// the wall clock; see `now`.
+    clock: Option<OffsetDateTime>,
     conversations: HashMap<Aci, Conversation>,
     told_strangers: HashMap<Aci, Instant>,
 }
 
 impl<R: Requests, D: Directory> Dialog<R, D> {
+    // Eight, and every one of them a distinct collaborator or piece of
+    // deployment configuration; bundling them into a struct would only move
+    // the same list one line further out.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         seerr: R,
         directory: D,
@@ -93,6 +165,8 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         settings_url: String,
         operator_name: String,
         quality_profiles: Vec<String>,
+        insight: Option<Arc<dyn Insight>>,
+        notices: Option<Arc<RwLock<Notices>>>,
     ) -> Self {
         Dialog {
             seerr,
@@ -101,9 +175,29 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
             settings_url,
             operator_name,
             quality_profiles,
+            insight,
+            notices,
+            clock: None,
             conversations: HashMap::new(),
             told_strangers: HashMap::new(),
         }
+    }
+
+    /// Fixes the "now" that decides which available wishes are still recent
+    /// enough to list, so a test does not have to date its fixtures against
+    /// the day it runs on.
+    ///
+    /// Not `#[cfg(test)]`: `tests/dialog.rs` is a separate crate and could
+    /// not see it if it were (the same reason `insert_conversation_aged`'s
+    /// two tests live inside this file).
+    pub fn with_clock(mut self, now: OffsetDateTime) -> Self {
+        self.clock = Some(now);
+        self
+    }
+
+    /// The wall clock, unless a test fixed one.
+    fn now(&self) -> OffsetDateTime {
+        self.clock.unwrap_or_else(OffsetDateTime::now_utc)
     }
 
     /// Lets a test look at what got placed through the fake `Requests`
@@ -478,6 +572,23 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         }
 
         let id_text = id.to_string();
+
+        // "It is on the list" and nothing else is true but useless for a
+        // film that has not come out yet: nothing will happen for months,
+        // and the person comes back in a week to ask why. Said here, at the
+        // moment of asking, it costs one question and saves that.
+        //
+        // Only for films (Sonarr has no such thing), and the sentence does
+        // not name the chosen version -- being told it is not out yet is the
+        // more useful half of the two.
+        if matches!(hit.kind, MediaKind::Movie) && self.not_released_yet(user, id).await {
+            return vec![self.catalogue.text(
+                locale,
+                "request.placed_not_released",
+                &[("title", hit.title.as_str()), ("id", id_text.as_str())],
+            )];
+        }
+
         let name = kept.and_then(|k| choices.iter().find(|p| p.id == k).map(|p| p.name.clone()));
         match name {
             Some(name) => vec![self.catalogue.text(
@@ -497,55 +608,226 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         }
     }
 
-    /// Maps `Wish::media_status` to the state shown -- inline for now, one
-    /// `title_for` call per line. Task 7 replaces this with the real status
-    /// logic (queue position, *arr history); this keeps `/status` compiling
-    /// and correct in the meantime.
+    /// Whether the film just placed has not come out for home viewing yet.
+    ///
+    /// EVERY miss in this chain answers "no" and leaves the ordinary
+    /// confirmation standing: no [insight] configured, Seerr not yet
+    /// carrying the Radarr id (it hands the request over asynchronously, so
+    /// this is the normal case within the first seconds), Seerr or Radarr
+    /// unreachable. Nothing here is waited for or retried -- a wish must
+    /// never fail, or be held up, because an extra question could not be
+    /// answered.
+    async fn not_released_yet(&self, user: SeerrUserId, request_id: i64) -> bool {
+        let Some(insight) = self.insight.as_ref() else {
+            return false;
+        };
+        let wishes = match self.seerr.pending(user).await {
+            Ok(wishes) => wishes,
+            Err(e) => {
+                tracing::info!(error = %e, request = request_id, "cannot read back the new wish");
+                return false;
+            }
+        };
+        let Some(arr_id) = wishes
+            .iter()
+            .find(|w| w.id == request_id)
+            .and_then(|w| w.arr_id)
+        else {
+            return false;
+        };
+        match insight.movie(arr_id).await {
+            Ok(movie) => !movie.is_available,
+            Err(e) => {
+                tracing::info!(error = %e, arr_id, "cannot ask about the film just placed");
+                false
+            }
+        }
+    }
+
+    /// One line per wish, each saying what is actually the matter with that
+    /// one.
+    ///
+    /// Until this task the answer was the same for every open wish -- "wird
+    /// geholt" -- including for a film that has not come out yet and for one
+    /// that exists in no version this household takes. Both of those wait
+    /// for ever, and the bot said they were on their way.
+    ///
+    /// The whole list is ALWAYS about the sender: `seerr_user` resolves the
+    /// Seerr account from the directory entry behind the Signal account the
+    /// message came from, and nothing in the message text can name another
+    /// one.
     async fn status(&mut self, from: &Aci, locale: Locale) -> Vec<String> {
         let user = match self.seerr_user(from, locale).await {
             Ok(id) => id,
             Err(message) => return message,
         };
-        match self.seerr.pending(user).await {
-            Ok(list) if list.is_empty() => {
-                vec![self.catalogue.text(locale, "status.empty", &[])]
-            }
-            Ok(list) => {
-                let mut lines = Vec::with_capacity(list.len());
-                for wish in &list {
-                    let title = match self.seerr.title_for(wish.kind, wish.tmdb_id).await {
-                        Ok(Some(title)) => title,
-                        Ok(None) => "?".to_string(),
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                tmdb_id = wish.tmdb_id,
-                                "cannot look up the title"
-                            );
-                            "?".to_string()
-                        }
-                    };
-                    let state_key = match wish.media_status {
-                        5 => "status.available",
-                        3 | 4 => "status.fetching",
-                        _ => "status.waiting",
-                    };
-                    let state = self.catalogue.text(locale, state_key, &[]);
-                    lines.push(self.catalogue.text(
-                        locale,
-                        "status.line",
-                        &[
-                            ("id", &wish.id.to_string()),
-                            ("title", &title),
-                            ("state", &state),
-                        ],
-                    ));
-                }
-                vec![lines.join("\n")]
-            }
+        let list = match self.seerr.pending(user).await {
+            Ok(list) => list,
             Err(e) => {
                 tracing::warn!(error = %e, "cannot list requests");
-                vec![self.catalogue.text(locale, "error.seerr_down", &[])]
+                return vec![self.catalogue.text(locale, "error.seerr_down", &[])];
+            }
+        };
+
+        let now = self.now();
+        let shown: Vec<Wish> = list.into_iter().filter(|w| is_shown(w, now)).collect();
+        if shown.is_empty() {
+            return vec![self.catalogue.text(locale, "status.empty", &[])];
+        }
+
+        let remembered = self.remembered(&shown);
+        let queues = self.queues(&shown).await;
+
+        let mut lines = Vec::with_capacity(shown.len());
+        for wish in &shown {
+            let (title, reason) = match remembered.get(&wish.id) {
+                Some((title, reason)) => (title.clone(), reason.clone()),
+                None => (None, None),
+            };
+            let title = match title {
+                Some(title) => title,
+                None => self.title_from_seerr(locale, wish).await,
+            };
+            let state = self
+                .state_text_for(locale, wish, &queues, reason.as_ref(), now)
+                .await;
+            lines.push(self.catalogue.text(
+                locale,
+                "status.line",
+                &[
+                    ("id", &wish.id.to_string()),
+                    ("title", &title),
+                    ("state", &state),
+                ],
+            ));
+        }
+        vec![lines.join("\n")]
+    }
+
+    /// What the notices file already knows about these wishes: the title it
+    /// recorded, and why the search is stuck if it knows that.
+    ///
+    /// Read in ONE go, and the guard dropped before the first `await` below.
+    /// This is a std lock, and holding one across an await would block every
+    /// other reader of it for the length of a network round trip -- on a
+    /// current-thread runtime it would block the runtime itself.
+    fn remembered(&self, shown: &[Wish]) -> HashMap<i64, (Option<String>, Option<Reason>)> {
+        let Some(notices) = self.notices.as_ref() else {
+            return HashMap::new();
+        };
+        let guard = notices.read().expect("the notices lock is never poisoned");
+        shown
+            .iter()
+            .filter_map(|wish| {
+                let note = guard.note(wish.id)?;
+                Some((wish.id, (note.title.clone(), note.reason.clone())))
+            })
+            .collect()
+    }
+
+    /// The *arr queues, read at most ONCE each per `/status`: the queue is a
+    /// property of the whole *arr, not of a wish, so asking per wish would
+    /// turn a five-line answer into five round trips. A kind whose queue
+    /// could not be read stays `None`, and its wishes fall back to what
+    /// Seerr alone says -- an extra source being down never costs an answer.
+    async fn queues(&self, shown: &[Wish]) -> Queues {
+        let mut queues = Queues::default();
+        let Some(insight) = self.insight.as_ref() else {
+            return queues;
+        };
+        for kind in [MediaKind::Movie, MediaKind::Tv] {
+            if !shown.iter().any(|w| w.kind == kind && needs_evidence(w)) {
+                continue;
+            }
+            match insight.queue(kind).await {
+                Ok(items) => *queues.slot(kind) = Some(items),
+                Err(e) => tracing::warn!(error = %e, ?kind, "cannot read the queue"),
+            }
+        }
+        queues
+    }
+
+    /// The state of one wish, in words.
+    async fn state_text_for(
+        &self,
+        locale: Locale,
+        wish: &Wish,
+        queues: &Queues,
+        known_reason: Option<&Reason>,
+        now: OffsetDateTime,
+    ) -> String {
+        // `classify`'s first two rows answer before any evidence is looked
+        // at, so for those wishes there is nothing to ask Radarr about.
+        if !needs_evidence(wish) {
+            return self.seerr_alone_text(locale, wish);
+        }
+        let (Some(insight), Some(arr_id)) = (self.insight.as_ref(), wish.arr_id) else {
+            return self.seerr_alone_text(locale, wish);
+        };
+        let Some(queue) = queues.of(wish.kind) else {
+            return self.seerr_alone_text(locale, wish);
+        };
+
+        let item = queue.iter().find(|q| q.arr_id == arr_id).cloned();
+        let mut movie = None;
+        let mut last_event = None;
+        // Only for a film, and only when the queue does not already answer:
+        // Sonarr has no "movie", and a series in the queue is the whole
+        // story anyway.
+        if item.is_none() && matches!(wish.kind, MediaKind::Movie) {
+            match insight.movie(arr_id).await {
+                Ok(found) => movie = Some(found),
+                Err(e) => {
+                    tracing::warn!(error = %e, arr_id, "cannot read the film");
+                    return self.seerr_alone_text(locale, wish);
+                }
+            }
+            match insight.last_event(MediaKind::Movie, arr_id).await {
+                Ok(found) => last_event = found,
+                Err(e) => {
+                    tracing::warn!(error = %e, arr_id, "cannot read the film's history");
+                    return self.seerr_alone_text(locale, wish);
+                }
+            }
+        }
+
+        let evidence = Evidence {
+            movie: movie.as_ref(),
+            queue_item: item.as_ref(),
+            last_event,
+            known_reason,
+        };
+        state_text(&self.catalogue, locale, &classify(wish, &evidence, now))
+    }
+
+    /// What Seerr alone can say -- all there is without an [insight]
+    /// section, and the fallback whenever a question to Radarr could not be
+    /// answered.
+    ///
+    /// The last row is deliberately "waiting" and not "still looking": with
+    /// no sight of the *arr, a search is something this bot has no knowledge
+    /// of, and claiming one is how `/status` came to answer "wird geholt"
+    /// for a film nobody could fetch.
+    fn seerr_alone_text(&self, locale: Locale, wish: &Wish) -> String {
+        if wish.media_status == 5 {
+            state_text(&self.catalogue, locale, &WishState::Available)
+        } else if wish.request_status == 4 || wish.arr_id.is_none() {
+            state_text(&self.catalogue, locale, &WishState::NotHandedOver)
+        } else {
+            self.catalogue.text(locale, "status.waiting", &[])
+        }
+    }
+
+    /// The title from Seerr -- asked for only where nothing was remembered.
+    /// A wish whose title nobody knows gets a said-out-loud placeholder, not
+    /// a bare "?", which reads like a fault.
+    async fn title_from_seerr(&self, locale: Locale, wish: &Wish) -> String {
+        match self.seerr.title_for(wish.kind, wish.tmdb_id).await {
+            Ok(Some(title)) => title,
+            Ok(None) => self.catalogue.text(locale, "status.untitled", &[]),
+            Err(e) => {
+                tracing::warn!(error = %e, tmdb_id = wish.tmdb_id, "cannot look up the title");
+                self.catalogue.text(locale, "status.untitled", &[])
             }
         }
     }
@@ -843,6 +1125,8 @@ mod tests {
             "https://example.invalid".to_string(),
             "the operator".to_string(),
             Vec::new(),
+            None,
+            None,
         );
         let aci = Aci("aaaa".into());
         d.insert_conversation_aged(
@@ -879,6 +1163,8 @@ mod tests {
             "https://example.invalid".to_string(),
             "the operator".to_string(),
             Vec::new(),
+            None,
+            None,
         );
         let aci = Aci("aaaa".into());
         let series = Hit {

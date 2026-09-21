@@ -28,6 +28,7 @@ already = "✓ schon da"
 
 [request]
 placed = "{title} ist eingetragen. Ich melde mich, sobald es da ist.\nVertippt? /weg {id} nimmt es wieder raus."
+placed_not_released = "{title} ist eingetragen. Er ist noch nicht fürs Heimkino erschienen — ich melde mich, sobald er da ist.\nVertippt? /weg {id} nimmt es wieder raus."
 placed_with_profile = "{title} ist eingetragen ({profile}). Ich melde mich, sobald es da ist.\nVertippt? /weg {id} nimmt es wieder raus."
 profile_question = "{title} — in welcher Fassung? Antworte mit der Nummer."
 already = "{title} gibt es schon."
@@ -38,13 +39,55 @@ unknown_id = "Einen Wunsch mit der Nummer {id} habe ich von dir nicht."
 [status]
 empty = "Von dir ist gerade nichts unterwegs."
 line = "{id}: {title} — {state}"
+untitled = "(ohne Titel)"
 waiting = "wartet"
-fetching = "wird geholt"
 available = "ist da"
+not_handed_over = "konnte ich nicht eintragen"
+import_stuck = "ist geladen, klemmt aber beim letzten Schritt"
+downloading = "lädt gerade, {percent} %"
+not_released = "noch nicht fürs Heimkino erschienen"
+not_released_date = "noch nicht fürs Heimkino erschienen (voraussichtlich ab {date})"
+download_failed = "ein Versuch ist gescheitert, ich suche weiter"
+searching = "ich suche noch, bisher war nichts Passendes dabei"
+nothing_exists = "bisher nirgends aufzutreiben"
+only_in_languages = "gibt es bisher nur auf {languages}"
+too_large = "gibt es bisher nur in Fassungen, die wir nicht nehmen (zu groß)"
+too_small = "gibt es bisher nur in Fassungen, die wir nicht nehmen (zu klein)"
+wrong_quality = "gibt es bisher nur in Fassungen, die wir nicht nehmen (Bildqualität)"
+otherwise = "gibt es bisher nur in Fassungen, die wir nicht nehmen"
+
+[notice]
+unsuitable = "„{title}\" {state}. Ich suche weiter und melde mich, wenn er da ist."
+unsuitable_hint = "Wenn dir eine andere Fassung recht ist: /weg {id}, dann noch einmal wünschen und eine andere Fassung wählen."
+download_failed = "Bei „{title}\" ist ein Versuch gescheitert. Ich suche weiter."
+import_stuck = "„{title}\" ist geladen, klemmt aber beim letzten Schritt. Das muss sich jemand ansehen."
 
 [available]
 ready = "„{title}\" ist da.\n{url}"
-failed = "„{title}\" habe ich nicht auftreiben können."
+failed = "„{title}\" konnte ich nicht eintragen. Das liegt an der Technik hier, nicht am Film — versuch es in ein paar Minuten noch einmal."
+
+# Radarr's own English language names, as they arrive in a release's
+# `languages` field. A name with no entry here is shown as Radarr sends it --
+# that is an ordinary outcome, not a missing translation, since Radarr knows
+# far more languages than a chat bot needs to name.
+[language]
+German = "Deutsch"
+English = "Englisch"
+French = "Französisch"
+Spanish = "Spanisch"
+Italian = "Italienisch"
+Portuguese = "Portugiesisch"
+"Portuguese (Brazil)" = "Portugiesisch (Brasilien)"
+Japanese = "Japanisch"
+Korean = "Koreanisch"
+Chinese = "Chinesisch"
+Russian = "Russisch"
+Dutch = "Niederländisch"
+Swedish = "Schwedisch"
+Danish = "Dänisch"
+Norwegian = "Norwegisch"
+Polish = "Polnisch"
+Turkish = "Türkisch"
 
 [error]
 unknown_sender = "Ich kenne dich noch nicht. Trag deinen Signal-Namen auf {url} unter „Dein Konto\" ein, dann melde ich mich."
