@@ -287,7 +287,10 @@ matter who types it. A search that reached the indexers and then failed is
 counted against the day's budget all the same — a budget that only counts
 successes is no budget — but it leaves no reason behind, so that one request
 is tried again the next day. "One per request, ever" would mean a single
-unreachable indexer settled the question for good.
+unreachable indexer settled the question for good. It is also the one call
+with a deadline of its own — **120 s**, against 20 s for everything else,
+because asking every indexer takes what it takes; see the proxy section
+below, which has to allow the same.
 
 What it buys is the difference between *still looking, nothing suitable so
 far* and *so far only available in Portuguese* (or *too big*, *too small*,
@@ -328,6 +331,16 @@ That is the complete list — the bot calls nothing else, so anything else
 arriving at the proxy is worth a look rather than a rule. `radarr_url` and
 `sonarr_url` may carry a path part (`http://192.0.2.50:7870/radarr`), so one
 proxy can front both.
+
+**`/api/v3/release` needs a longer read timeout than the rest, and a proxy's
+default is shorter than the search takes.** That call fans out to every
+indexer: measured on 2026-09-22, a movie's first search took **23 s** and a
+repeat of it, answered from Radarr's cache, **2.3 s**. The bot gives that one
+path **120 s** — every other call keeps 20 s — so nginx needs
+`proxy_read_timeout 120s;` on the `/api/v3/release` location, and other
+proxies their equivalent. Leave it at the usual 60 s and the search is cut
+off at the proxy on exactly the films that were hardest to find, which is
+the opposite of what it is for.
 
 Leave `/api/v3/release` out of the list if `reason_search` stays off; the bot
 then never asks for it. And note what that endpoint answers with: a release

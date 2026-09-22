@@ -1,12 +1,23 @@
 use signal_seerr::arr::{ArrClient, HistoryEvent, Insight, QueueState, ReleaseSearch};
 use signal_seerr::model::MediaKind;
 use signal_seerr::secret::Secret;
+use std::time::Duration;
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn client(server: &MockServer) -> ArrClient {
     ArrClient::new(&server.uri(), Secret::from("k-e-y".to_string()), None)
 }
+
+/// The production deadlines are 20 s and 120 s; a test that waited that long
+/// to watch one expire is a test nobody runs. These are the same two
+/// deadlines, in milliseconds, so the ORDER between them -- the thing under
+/// test -- is the same.
+const SHORT: Duration = Duration::from_millis(150);
+const LONG: Duration = Duration::from_secs(5);
+/// Longer than `SHORT`, short enough that the whole file still runs in under
+/// a second.
+const SLOWER_THAN_SHORT: Duration = Duration::from_millis(400);
 
 /// Every file this test reads is what a running Radarr instance actually
 /// sent on 2026-09-21 (see `tests/fixtures/README.md`), never a body built by
@@ -303,4 +314,130 @@ async fn a_series_query_without_sonarr_configured_is_an_error() {
     let c = client(&server); // sonarr: None
     assert!(c.queue(MediaKind::Tv).await.is_err());
     assert!(c.last_event(MediaKind::Tv, 1).await.is_err());
+}
+
+/// Measured on the live server on 2026-09-22: the first watch round after the
+/// 0.3.0 deploy logged `radarr answered 200 OK for /api/v3/release?movieId=118
+/// with a body this bot cannot read` after 23 seconds -- while the answer
+/// recorded seconds later had exactly this fixture's shape and deserialises
+/// fine. The client's deadline had run out; the message blamed the body.
+/// A deadline that runs out must be called a deadline that runs out, or the
+/// next person spends the evening looking at serde.
+#[tokio::test]
+async fn a_call_past_its_deadline_is_a_timeout_and_not_an_unreadable_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v3/movie/111"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(MOVIE_ANNOUNCED, "application/json")
+                .set_delay(SLOWER_THAN_SHORT),
+        )
+        .mount(&server)
+        .await;
+
+    let err = client(&server)
+        .with_deadlines(SHORT, LONG)
+        .movie(111)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("did not answer within"), "got: {err}");
+    assert!(!err.contains("cannot read"), "got: {err}");
+}
+
+/// Answers the headers at once and then stalls halfway through the body, so
+/// reqwest's deadline expires while READING -- the measured shape, and the
+/// one reqwest reports as `is_decode()` (`Response::do_bytes` wraps every
+/// body failure, the deadline included, in `error::decode`). Whoever checks
+/// `is_decode()` before `is_timeout()` gets the bug back.
+///
+/// The bytes are the recording's own; only the delivery is staged, which no
+/// mock server offers.
+async fn answers_then_stalls(body: &'static str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0u8; 2048];
+        let _ = socket.read(&mut request).await;
+        // An honest Content-Length, and then half of what it promises.
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        socket.write_all(head.as_bytes()).await.unwrap();
+        socket
+            .write_all(&body.as_bytes()[..body.len() / 2])
+            .await
+            .unwrap();
+        socket.flush().await.unwrap();
+        // The rest never comes, and the connection stays open.
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    });
+    format!("http://{address}")
+}
+
+#[tokio::test]
+async fn a_body_that_stops_halfway_is_a_timeout_and_not_an_unreadable_body() {
+    let base = answers_then_stalls(RELEASES_ALL_REJECTED).await;
+    let err = ArrClient::new(&base, Secret::from("k-e-y".to_string()), None)
+        // The release deadline is the short one here: it is the one under test.
+        .with_deadlines(LONG, SHORT)
+        .releases(111)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("did not answer within"), "got: {err}");
+    assert!(!err.contains("cannot read"), "got: {err}");
+    assert!(err.contains("/api/v3/release"), "got: {err}");
+}
+
+/// The point of the whole change: an interactive search at every indexer is
+/// allowed to take far longer than a lookup of one movie. Same server, same
+/// delay, two deadlines -- the movie call gives up, the release search does
+/// not.
+#[tokio::test]
+async fn a_release_search_gets_the_longer_deadline() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v3/movie/111"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(MOVIE_ANNOUNCED, "application/json")
+                .set_delay(SLOWER_THAN_SHORT),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v3/release"))
+        .and(query_param("movieId", "111"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(RELEASES_ALL_REJECTED, "application/json")
+                .set_delay(SLOWER_THAN_SHORT),
+        )
+        .mount(&server)
+        .await;
+
+    let c = client(&server).with_deadlines(SHORT, LONG);
+    assert!(c.movie(111).await.is_err(), "the short deadline holds");
+    assert_eq!(c.releases(111).await.unwrap().len(), 37);
+}
+
+/// Nothing in `main` passes deadlines, so the constants are what a deployed
+/// bot runs with -- and the release one is the number the proxy in front has
+/// to allow.
+#[tokio::test]
+async fn the_release_deadline_is_two_minutes_and_the_others_twenty_seconds() {
+    assert_eq!(
+        signal_seerr::arr::RELEASE_DEADLINE,
+        Duration::from_secs(120)
+    );
+    assert_eq!(
+        signal_seerr::arr::STANDARD_DEADLINE,
+        Duration::from_secs(20)
+    );
 }

@@ -10,6 +10,22 @@ use crate::model::MediaKind;
 use crate::secret::Secret;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
+use std::time::Duration;
+
+/// What a plain lookup -- one movie, the queue, a history list -- may take.
+pub const STANDARD_DEADLINE: Duration = Duration::from_secs(20);
+
+/// What `/api/v3/release` may take, and it is six times the other one because
+/// that call is a different animal: it fans out to every indexer the operator
+/// has configured and waits for all of them.
+///
+/// MEASURED, not chosen: on 2026-09-22 the first search for a movie took
+/// **23 s** and ran into the 20 s deadline -- the fault this number fixes --
+/// while a repeat of the same search, answered from Radarr's cache, took
+/// **2.3 s**. 120 s is the value the filtering proxy in front of Radarr
+/// allows for this path (`proxy_read_timeout`, see `README.md`), so the bot
+/// gives up no earlier than the hop in front of it does.
+pub const RELEASE_DEADLINE: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ArrMovie {
@@ -121,6 +137,8 @@ pub struct ArrClient {
     radarr: (String, Secret),
     sonarr: Option<(String, Secret)>,
     http: reqwest::Client,
+    standard_deadline: Duration,
+    release_deadline: Duration,
 }
 
 impl ArrClient {
@@ -128,8 +146,12 @@ impl ArrClient {
         ArrClient {
             radarr: (radarr_url.to_string(), radarr_key),
             sonarr: sonarr.map(|(url, key)| (url.to_string(), key)),
+            standard_deadline: STANDARD_DEADLINE,
+            release_deadline: RELEASE_DEADLINE,
+            // No `.timeout()` on the builder: every call names its own
+            // deadline (`get_within`), and a default underneath it would only
+            // raise the question of which of the two wins.
             http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(20))
                 // A redirect carries our own headers onwards. reqwest strips
                 // `Authorization` when the host changes; `X-Api-Key` is not a
                 // header it knows about, so it is sent to wherever the
@@ -144,6 +166,16 @@ impl ArrClient {
                      wherever that store is missing; point SSL_CERT_FILE at a CA bundle",
                 ),
         }
+    }
+
+    /// The same client with both deadlines named. Nothing in `main` calls
+    /// this: it exists so a test can watch a deadline expire in milliseconds
+    /// instead of waiting the real twenty seconds for it.
+    #[must_use]
+    pub fn with_deadlines(mut self, standard: Duration, release: Duration) -> ArrClient {
+        self.standard_deadline = standard;
+        self.release_deadline = release;
+        self
     }
 
     /// Which service serves this kind of media, and under which name --
@@ -178,6 +210,15 @@ impl ArrClient {
     /// same reason: serde names the offending VALUE ("invalid type: string
     /// \"...\""), and this error travels by `?` into a `tracing::warn!` in
     /// `watch.rs`. The path and the status say enough to find the fault.
+    ///
+    /// AND THAT SILENCE USED TO SWALLOW A DIFFERENT FAULT WHOLE: until
+    /// 0.3.1 every failure of `json()` was reported as "a body this bot
+    /// cannot read", so a deadline that expired mid-answer was blamed on
+    /// serde. On 2026-09-22 that cost an evening -- the release search ran
+    /// 23 s into a 20 s deadline and the log said the body was unreadable,
+    /// while the answer recorded seconds later deserialised fine. An error
+    /// says WHICH KIND it is now, and the one thing it still never says is
+    /// what serde read.
     async fn get<T: serde::de::DeserializeOwned>(
         &self,
         base: &str,
@@ -185,23 +226,77 @@ impl ArrClient {
         service: &str,
         path: &str,
     ) -> Result<T> {
+        self.get_within(base, key, service, path, self.standard_deadline)
+            .await
+    }
+
+    /// `get` with the deadline spelled out, for the one call that needs a
+    /// different one.
+    async fn get_within<T: serde::de::DeserializeOwned>(
+        &self,
+        base: &str,
+        key: &Secret,
+        service: &str,
+        path: &str,
+        deadline: Duration,
+    ) -> Result<T> {
         let url = format!("{}{path}", base.trim_end_matches('/'));
         let response = self
             .http
             .get(&url)
             .header("X-Api-Key", key.expose())
+            .timeout(deadline)
             .send()
-            .await?;
+            .await
+            .map_err(|e| transport_failure(service, path, deadline, e))?;
         let status = response.status();
         if !status.is_success() {
             bail!("{service} answered {status} for {path}");
         }
         match response.json::<T>().await {
             Ok(body) => Ok(body),
-            Err(_) => {
+            // THE ORDER OF THESE TWO ARMS IS THE FIX. `is_decode()` is true
+            // for an expired deadline as well as for serde: `Response::json`
+            // collects the body first, and `do_bytes` wraps EVERY failure of
+            // that collect -- the deadline included -- in `error::decode`
+            // (reqwest 0.13.4, `src/async_impl/response.rs`). Asking
+            // `is_decode()` first is exactly the bug of 0.3.0, restated in
+            // better-looking code.
+            Err(e) if e.is_timeout() => Err(transport_failure(service, path, deadline, e)),
+            Err(e) if e.is_decode() => {
                 bail!("{service} answered {status} for {path} with a body this bot cannot read")
             }
+            // A connection reset, a body cut short, a broken pipe: the answer
+            // never arrived whole, and that is not the same fault as an
+            // answer this bot could not parse.
+            Err(e) => Err(transport_failure(service, path, deadline, e)),
         }
+    }
+}
+
+/// A failure that is not serde's: the answer did not arrive, or did not
+/// arrive whole.
+///
+/// REQWEST'S OWN TEXT IS SAFE TO REPEAT HERE, and that was checked rather
+/// than assumed (reqwest 0.13.4, `src/error.rs`): `Display` writes the kind
+/// ("error sending request", "request or response body error", "error
+/// decoding response body"), then ` for url (...)`, and then stops -- it
+/// prints neither the response body nor the source chain. The URL is this
+/// bot's own `radarr_url`/`sonarr_url` plus a path built from an id; the API
+/// key travels in the `X-Api-Key` HEADER and is never part of it. Serde's
+/// message, which quotes the offending value, stays out on the other branch.
+fn transport_failure(
+    service: &str,
+    path: &str,
+    deadline: Duration,
+    e: reqwest::Error,
+) -> anyhow::Error {
+    if e.is_timeout() {
+        // `{deadline:?}` renders a Duration as `120s` or `150ms` -- the
+        // number the operator has to compare against the proxy's own.
+        anyhow::anyhow!("{service}: {path} did not answer within {deadline:?}")
+    } else {
+        anyhow::anyhow!("{service}: {path} failed while reading the answer: {e}")
     }
 }
 
@@ -295,11 +390,12 @@ impl ReleaseSearch for ArrClient {
         // `Vec<Release>` straight off the wire: `Release` names three fields,
         // and serde drops the rest as it reads them. No `serde_json::Value`
         // holds the answer in between (see `get`).
-        self.get(
+        self.get_within(
             base,
             key,
             service,
             &format!("/api/v3/release?movieId={movie_id}"),
+            self.release_deadline,
         )
         .await
     }
