@@ -330,6 +330,109 @@ async fn open_wishes_drops_what_is_already_available() {
     assert!(wishes.iter().all(|w| w.media_status != 5));
 }
 
+/// Two pages, and the point is the SECOND request's `skip`: it has to count
+/// what page one actually delivered (18), not the `take=100` the code asked
+/// for. With a constant, page two would be asked for at `skip=100` -- past
+/// the end of a 36-entry collection -- and eighteen wishes would never be
+/// looked at, which is silence for ever for each of them.
+///
+/// Both bodies are the recording cut in half with `serde_json`; nothing
+/// here is a hand-built answer.
+#[tokio::test]
+async fn open_wishes_walks_a_second_page_by_what_the_first_one_delivered() {
+    let raw: serde_json::Value = serde_json::from_str(REQUEST_ALL).unwrap();
+    let all = raw["results"].as_array().unwrap().clone();
+    let half = all.len() / 2;
+    let page = |entries: &[serde_json::Value]| {
+        serde_json::json!({
+            "pageInfo": { "pages": 2, "pageSize": half, "results": all.len(), "page": 1 },
+            "results": entries,
+        })
+        .to_string()
+    };
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/request"))
+        .and(query_param("skip", "0"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(page(&all[..half]), "application/json"),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/request"))
+        .and(query_param("skip", half.to_string()))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(page(&all[half..]), "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let wishes = client(&server).open_wishes().await.unwrap();
+
+    let open_in_recording = all
+        .iter()
+        .filter(|r| r["media"]["status"].as_i64() != Some(5))
+        .count();
+    assert_eq!(
+        wishes.len(),
+        open_in_recording,
+        "both pages have to arrive, or the ones in the gap are never seen again"
+    );
+}
+
+/// An empty page ends the walk even where `pageInfo.pages` promises more --
+/// a `pages` that is too large, or a server that ignores `skip`, must not
+/// turn into a loop that never gets anywhere.
+#[tokio::test]
+async fn open_wishes_stops_at_an_empty_page() {
+    let raw: serde_json::Value = serde_json::from_str(REQUEST_ALL).unwrap();
+    let all = raw["results"].as_array().unwrap().clone();
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/request"))
+        .and(query_param("skip", "0"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                serde_json::json!({
+                    "pageInfo": { "pages": 9, "pageSize": 100, "results": all.len(), "page": 1 },
+                    "results": all,
+                })
+                .to_string(),
+                "application/json",
+            ),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/request"))
+        .and(query_param("skip", all.len().to_string()))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                serde_json::json!({
+                    "pageInfo": { "pages": 9, "pageSize": 100, "results": all.len(), "page": 2 },
+                    "results": [],
+                })
+                .to_string(),
+                "application/json",
+            ),
+        )
+        .mount(&server)
+        .await;
+
+    // No mock for a third page: an attempt at one answers 404 and would make
+    // this fail rather than hang.
+    let wishes = client(&server).open_wishes().await.unwrap();
+    assert_eq!(
+        wishes.len(),
+        all.iter()
+            .filter(|r| r["media"]["status"].as_i64() != Some(5))
+            .count()
+    );
+}
+
 #[tokio::test]
 async fn requester_of_reads_the_jellyfin_username() {
     let server = MockServer::start().await;

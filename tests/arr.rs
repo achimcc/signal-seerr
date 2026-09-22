@@ -186,6 +186,34 @@ async fn releases_deserialises_only_the_three_safe_fields() {
     );
 }
 
+/// A release list is the one answer whose UNREAD fields are dangerous:
+/// `downloadUrl`, `guid` and `infoUrl` carry the operator's indexer keys and
+/// tracker passkeys. So when the answer does not fit `Release`, serde's own
+/// message -- which quotes the offending VALUE -- must not travel onwards;
+/// `watch.rs` puts exactly this error into a `tracing::warn!`.
+///
+/// The body is the recording with ONE field flipped (`serde_json`, not a
+/// hand-built answer): `rejected` becomes a string carrying a passkey-shaped
+/// value, and the error must not repeat it.
+#[tokio::test]
+async fn a_release_answer_that_does_not_fit_is_an_error_without_the_offending_value() {
+    let mut body: serde_json::Value = serde_json::from_str(RELEASES_ALL_REJECTED).unwrap();
+    const SENTINEL: &str = "passkey-0123456789abcdef";
+    body[0]["rejected"] = serde_json::Value::String(SENTINEL.to_string());
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v3/release"))
+        .and(query_param("movieId", "111"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.to_string(), "application/json"))
+        .mount(&server)
+        .await;
+
+    let err = client(&server).releases(111).await.unwrap_err().to_string();
+    assert!(!err.contains(SENTINEL), "got: {err}");
+    assert!(err.contains("/api/v3/release"), "got: {err}");
+}
+
 /// `base` may carry a path part -- `http://host:7870/radarr` -- and it must
 /// survive: `Url::join` would drop it.
 #[tokio::test]

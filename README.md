@@ -330,9 +330,11 @@ Leave `/api/v3/release` out of the list if `reason_search` stays off; the bot
 then never asks for it. And note what that endpoint answers with: a release
 list carries indexer URLs, and those URLs carry the operator's passkeys. The
 bot deserialises three fields out of each release (`rejected`, `rejections`,
-`languages`) and nothing else, so a passkey never reaches a log line or a
-message — but it does cross the wire, which is one more reason for the proxy
-to sit between the two rather than the key travelling further than it has to.
+`languages`) and nothing else — the answer is decoded straight into those
+three, never into a JSON tree of the whole thing first — so a passkey never
+reaches a log line or a message. It does cross the wire, though, which is one
+more reason for the proxy to sit between the two rather than the key
+travelling further than it has to.
 
 ## License
 

@@ -427,10 +427,16 @@ impl Requests for SeerrClient {
     /// caps `take` well below the size this collection can reach) and then
     /// drops what is already available.
     async fn open_wishes(&self) -> Result<Vec<Wish>> {
+        // `skip` COUNTS WHAT WAS DELIVERED, not what was asked for. Seerr
+        // caps `take` at its own maximum, so a server that answers 100 with
+        // fewer than 100 entries would, with `page * 100`, leave a gap: the
+        // wishes in it would simply never be looked at, and a wish nobody
+        // looks at is silent for ever -- the very defect this loop exists to
+        // remove.
         let mut wishes = Vec::new();
-        let mut page: i64 = 0;
+        let mut skip: usize = 0;
+        let mut pages_read: i64 = 0;
         loop {
-            let skip = page * 100;
             let response = self
                 .get(&format!(
                     "/api/v1/request?take=100&skip={skip}&filter=all&sort=added"
@@ -438,12 +444,12 @@ impl Requests for SeerrClient {
                 .send()
                 .await?;
             let body = self.json(response).await?;
-            for r in body
+            let results = body
                 .get("results")
                 .and_then(|r| r.as_array())
                 .map(|v| v.as_slice())
-                .unwrap_or(&[])
-            {
+                .unwrap_or(&[]);
+            for r in results {
                 match wish_from(r) {
                     Some(w) => wishes.push(w),
                     None => tracing::warn!(id = ?r.get("id"), "request entry did not parse"),
@@ -454,10 +460,14 @@ impl Requests for SeerrClient {
                 .and_then(|p| p.get("pages"))
                 .and_then(|p| p.as_i64())
                 .unwrap_or(1);
-            page += 1;
-            if page >= pages {
+            pages_read += 1;
+            // An empty page ends it whatever `pages` claims -- otherwise a
+            // `pages` that is too large (or a `skip` the server ignores)
+            // turns into a loop that never gets anywhere.
+            if results.is_empty() || pages_read >= pages {
                 break;
             }
+            skip += results.len();
         }
         wishes.retain(|w| w.media_status != 5);
         Ok(wishes)

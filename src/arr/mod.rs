@@ -41,7 +41,9 @@ pub enum HistoryEvent {
 }
 
 /// Deliberately three fields. Titles, indexers, URLs are never deserialised,
-/// so they cannot end up in a message or a log line.
+/// so they cannot end up in a message or a log line -- and `get` decodes the
+/// answer straight into `Vec<Release>`, so they are not built into a
+/// `serde_json::Value` on the way either.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]
 pub struct Release {
     pub rejected: bool,
@@ -156,13 +158,26 @@ impl ArrClient {
     /// so the URL is built with `format!`, not `Url::join`, which would drop
     /// it. An error body is never echoed -- it can carry a release's or a
     /// series' name.
-    async fn get(
+    ///
+    /// GENERIC IN `T`, AND THAT IS THE WHOLE POINT FOR `/release`: the answer
+    /// is decoded straight into the caller's type, so the fields this bot
+    /// does not name are never built into a `serde_json::Value` tree at all.
+    /// A release list carries `downloadUrl`, `guid` and `infoUrl`, and those
+    /// carry the operator's indexer keys and tracker passkeys; with a `Value`
+    /// in between, every one of them sat in memory no matter what was read
+    /// out of it afterwards.
+    ///
+    /// A DESERIALISATION FAILURE IS REPORTED WITHOUT SERDE'S OWN TEXT for the
+    /// same reason: serde names the offending VALUE ("invalid type: string
+    /// \"...\""), and this error travels by `?` into a `tracing::warn!` in
+    /// `watch.rs`. The path and the status say enough to find the fault.
+    async fn get<T: serde::de::DeserializeOwned>(
         &self,
         base: &str,
         key: &Secret,
         service: &str,
         path: &str,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<T> {
         let url = format!("{}{path}", base.trim_end_matches('/'));
         let response = self
             .http
@@ -174,7 +189,12 @@ impl ArrClient {
         if !status.is_success() {
             bail!("{service} answered {status} for {path}");
         }
-        Ok(response.json().await?)
+        match response.json::<T>().await {
+            Ok(body) => Ok(body),
+            Err(_) => {
+                bail!("{service} answered {status} for {path} with a body this bot cannot read")
+            }
+        }
     }
 }
 
@@ -182,7 +202,7 @@ impl ArrClient {
 impl Insight for ArrClient {
     async fn movie(&self, id: i64) -> Result<ArrMovie> {
         let (base, key, service) = self.service(MediaKind::Movie)?;
-        let body = self
+        let body: serde_json::Value = self
             .get(base, key, service, &format!("/api/v3/movie/{id}"))
             .await?;
         Ok(ArrMovie {
@@ -205,7 +225,7 @@ impl Insight for ArrClient {
             MediaKind::Movie => ("/api/v3/queue?pageSize=200&includeMovie=false", "movieId"),
             MediaKind::Tv => ("/api/v3/queue?pageSize=200&includeSeries=false", "seriesId"),
         };
-        let body = self.get(base, key, service, path).await?;
+        let body: serde_json::Value = self.get(base, key, service, path).await?;
         let records = body
             .get("records")
             .and_then(|r| r.as_array())
@@ -238,7 +258,7 @@ impl Insight for ArrClient {
             MediaKind::Movie => format!("/api/v3/history/movie?movieId={id}"),
             MediaKind::Tv => format!("/api/v3/history/series?seriesId={id}"),
         };
-        let body = self.get(base, key, service, &path).await?;
+        let body: serde_json::Value = self.get(base, key, service, &path).await?;
         let mut entries: Vec<(time::OffsetDateTime, &str)> = body
             .as_array()
             .map(|v| v.as_slice())
@@ -265,14 +285,15 @@ impl Insight for ArrClient {
 impl ReleaseSearch for ArrClient {
     async fn releases(&self, movie_id: i64) -> Result<Vec<Release>> {
         let (base, key, service) = self.service(MediaKind::Movie)?;
-        let body = self
-            .get(
-                base,
-                key,
-                service,
-                &format!("/api/v3/release?movieId={movie_id}"),
-            )
-            .await?;
-        Ok(serde_json::from_value(body)?)
+        // `Vec<Release>` straight off the wire: `Release` names three fields,
+        // and serde drops the rest as it reads them. No `serde_json::Value`
+        // holds the answer in between (see `get`).
+        self.get(
+            base,
+            key,
+            service,
+            &format!("/api/v3/release?movieId={movie_id}"),
+        )
+        .await
     }
 }

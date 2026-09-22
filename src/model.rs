@@ -166,6 +166,41 @@ mod tests {
         );
     }
 
+    /// THE WORDING IS THE SUBJECT HERE. A round trip only proves that serde
+    /// agrees with itself; this file is a contract with something that
+    /// outlives the process -- the notices record on disk, written by one
+    /// version of this bot and read by the next. A rename, a change of
+    /// `rename_all`, or dropping `content = "detail"` would all pass a round
+    /// trip and would all make every existing note unreadable, which loses
+    /// the record of what has already been said and tells everybody about
+    /// every wish all over again.
+    #[test]
+    fn a_reason_on_disk_is_written_in_exactly_this_shape() {
+        assert_eq!(
+            serde_json::to_string(&Reason::OnlyInLanguages(vec!["Portuguese".to_string()]))
+                .unwrap(),
+            r#"{"class":"only_in_languages","detail":["Portuguese"]}"#
+        );
+        // A variant without a payload writes no `detail` key at all.
+        assert_eq!(
+            serde_json::to_string(&Reason::NothingExists).unwrap(),
+            r#"{"class":"nothing_exists"}"#
+        );
+        // And both are read back from that literal text, not from something
+        // this test just serialised.
+        assert_eq!(
+            serde_json::from_str::<Reason>(
+                r#"{"class":"only_in_languages","detail":["Portuguese"]}"#
+            )
+            .unwrap(),
+            Reason::OnlyInLanguages(vec!["Portuguese".to_string()])
+        );
+        assert_eq!(
+            serde_json::from_str::<Reason>(r#"{"class":"nothing_exists"}"#).unwrap(),
+            Reason::NothingExists
+        );
+    }
+
     #[test]
     fn reason_unit_variant_round_trips_through_json() {
         let reason = Reason::NothingExists;
