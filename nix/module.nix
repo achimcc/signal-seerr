@@ -36,6 +36,32 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # The notices record is the one file this service MUST be able to write,
+    # and `ProtectSystem = "strict"` below leaves it exactly one writable
+    # place: the StateDirectory. Point `notices_file` anywhere else and the
+    # bot comes up, answers `/status`, sends its first unasked message -- and
+    # then fails to record that it did, so it sends it again on the next
+    # round, and the round after that. A read-only file system is an error
+    # in a log line nobody is watching; here it is a build-time refusal with
+    # the path in it.
+    assertions = [
+      {
+        assertion =
+          let
+            notices = cfg.settings.insight.notices_file or null;
+          in
+          notices == null || lib.hasPrefix "/var/lib/signal-seerr/" (toString notices);
+        message = ''
+          services.signal-seerr.settings.insight.notices_file is
+          "${toString (cfg.settings.insight.notices_file or "")}", which is outside
+          /var/lib/signal-seerr/ -- the StateDirectory, and the only path this unit
+          can write to (ProtectSystem = "strict"). The bot would tell people about
+          the same stalled wish on every round, because it could never record that
+          it already had.
+        '';
+      }
+    ];
+
     # Deliberately NOT a hardened unit with its own mount namespace beyond
     # what is listed here. A sandboxing option that gives a unit its own
     # mount or network namespace (several of the Protect* family do) can

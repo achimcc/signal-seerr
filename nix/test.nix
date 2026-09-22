@@ -50,11 +50,20 @@ let
         # the two differ in their `settings` alone.
         printf r > /run/secrets/radarr-key
         # An UNREADABLE notices record -- truncated JSON. The [insight]
-        # machine points `notices_file` at it; the other never looks. Under
-        # /run and not under the StateDirectory because nothing is meant to
-        # write it: the whole assertion is that the bot leaves it alone
-        # instead of replacing it with an empty record.
-        printf '{ truncated' > /run/notices.json
+        # machine points `notices_file` at it; the other never looks. It sits
+        # INSIDE the StateDirectory, which is where the module's assertion
+        # now insists it live, and that makes this the stronger test: the
+        # service may write there, so "the file is untouched afterwards" is
+        # the bot's own restraint and not the file system's.
+        #
+        # Written to /var/lib/private/signal-seerr, which is the real
+        # directory behind /var/lib/signal-seerr under DynamicUser -- systemd
+        # creates the symlink itself when the service starts, and a file root
+        # puts there beforehand (or afterwards; this script and the bot's own
+        # read are ordered by the socket wait) is the same inode the service
+        # sees.
+        mkdir -p -m 0700 /var/lib/private /var/lib/private/signal-seerr
+        printf '{ truncated' > /var/lib/private/signal-seerr/notices.json
         # mode=0777: this script runs as root (no User= set) and socat's
         # default is 0755, owner root. signal-seerr runs under DynamicUser,
         # an ephemeral uid/gid unrelated to root's -- connecting to a UNIX
@@ -111,7 +120,7 @@ pkgs.testers.runNixOSTest {
     insight = {
       radarr_url = "http://127.0.0.1:7878";
       radarr_key_file = "/run/secrets/radarr-key";
-      notices_file = "/run/notices.json";
+      notices_file = "/var/lib/signal-seerr/notices.json";
       # Short on purpose: were the record readable, the watcher would reach
       # the stand-in within seconds, so a wiring that ignored the load
       # error could not hide behind a ten-minute interval.
@@ -190,13 +199,16 @@ pkgs.testers.runNixOSTest {
     # file first: grep in a pipeline is what the comment above warns about.
     insightnode.wait_until_succeeds(
         "journalctl -u signal-seerr.service --no-pager -o cat > /tmp/journal.txt; "
-        "grep -F -c /run/notices.json /tmp/journal.txt"
+        "grep -F -c /var/lib/signal-seerr/notices.json /tmp/journal.txt"
     )
 
     # The decisive one. An unreadable record replaced by an empty one would
     # repeat every notice to everybody, so the file must still be exactly
-    # what it was.
-    insightnode.succeed("grep -F -x -c '{ truncated' /run/notices.json")
+    # what it was -- and it sits in the one directory this service IS allowed
+    # to write to, so nothing but the bot's own restraint keeps it that way.
+    insightnode.succeed(
+        "grep -F -x -c '{ truncated' /var/lib/private/signal-seerr/notices.json"
+    )
 
     # And the webhook goes on working, right token and wrong.
     insightnode.succeed(
