@@ -395,6 +395,26 @@ async fn a_body_that_stops_halfway_is_a_timeout_and_not_an_unreadable_body() {
     assert!(err.contains("/api/v3/release"), "got: {err}");
 }
 
+/// An answer that never started is not an answer this bot could not read,
+/// and it is not a deadline either. Port 1 on loopback refuses at once, so
+/// this measures the wording rather than waiting for anything.
+#[tokio::test]
+async fn a_host_that_refuses_is_neither_a_timeout_nor_an_unreadable_body() {
+    let err = ArrClient::new(
+        "http://127.0.0.1:1",
+        Secret::from("k-e-y".to_string()),
+        None,
+    )
+    .with_deadlines(SHORT, SHORT)
+    .movie(111)
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("could not be reached"), "got: {err}");
+    assert!(!err.contains("cannot read"), "got: {err}");
+    assert!(!err.contains("did not answer within"), "got: {err}");
+}
+
 /// The point of the whole change: an interactive search at every indexer is
 /// allowed to take far longer than a lookup of one movie. Same server, same
 /// delay, two deadlines -- the movie call gives up, the release search does

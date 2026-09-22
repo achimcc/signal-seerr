@@ -216,9 +216,13 @@ impl ArrClient {
     /// cannot read", so a deadline that expired mid-answer was blamed on
     /// serde. On 2026-09-22 that cost an evening -- the release search ran
     /// 23 s into a 20 s deadline and the log said the body was unreadable,
-    /// while the answer recorded seconds later deserialised fine. An error
-    /// says WHICH KIND it is now, and the one thing it still never says is
-    /// what serde read.
+    /// while the answer recorded seconds later deserialised fine.
+    ///
+    /// So an expired deadline now says so, wherever it struck. That is the
+    /// only split reqwest supports here, and the doc comments on
+    /// `send_failure` and the match arms say where each message can come
+    /// from -- what the code can tell apart, not what would be nice to. The
+    /// one thing no message ever carries is what serde read.
     async fn get<T: serde::de::DeserializeOwned>(
         &self,
         base: &str,
@@ -248,55 +252,64 @@ impl ArrClient {
             .timeout(deadline)
             .send()
             .await
-            .map_err(|e| transport_failure(service, path, deadline, e))?;
+            .map_err(|e| send_failure(service, path, deadline, e))?;
         let status = response.status();
         if !status.is_success() {
             bail!("{service} answered {status} for {path}");
         }
         match response.json::<T>().await {
             Ok(body) => Ok(body),
-            // THE ORDER OF THESE TWO ARMS IS THE FIX. `is_decode()` is true
-            // for an expired deadline as well as for serde: `Response::json`
-            // collects the body first, and `do_bytes` wraps EVERY failure of
-            // that collect -- the deadline included -- in `error::decode`
-            // (reqwest 0.13.4, `src/async_impl/response.rs`). Asking
+            // THE ORDER OF THESE TWO ARMS IS THE FIX, and there is no third
+            // one to have. `do_bytes` wraps EVERY failure of `Response::json`
+            // -- serde's, a connection reset, a body cut short, and the
+            // expired deadline -- in `error::decode` (reqwest 0.13.4,
+            // `src/async_impl/response.rs`), so `is_decode()` is true for
+            // anything `is_timeout()` did not already catch. Asking
             // `is_decode()` first is exactly the bug of 0.3.0, restated in
-            // better-looking code.
-            Err(e) if e.is_timeout() => Err(transport_failure(service, path, deadline, e)),
-            Err(e) if e.is_decode() => {
+            // better-looking code; asking anything AFTER it is dead code.
+            Err(e) if e.is_timeout() => Err(timed_out(service, path, deadline)),
+            // So this arm is not only serde. A body that stopped short or a
+            // connection that dropped mid-answer lands here too, and reads as
+            // "cannot read" -- which is what happened: the body could not be
+            // read. It stays one message because reqwest does not tell the
+            // two apart here, and a message that claimed to would be guessing.
+            Err(_) => {
                 bail!("{service} answered {status} for {path} with a body this bot cannot read")
             }
-            // A connection reset, a body cut short, a broken pipe: the answer
-            // never arrived whole, and that is not the same fault as an
-            // answer this bot could not parse.
-            Err(e) => Err(transport_failure(service, path, deadline, e)),
         }
     }
 }
 
-/// A failure that is not serde's: the answer did not arrive, or did not
-/// arrive whole.
+/// The deadline ran out -- while connecting, while waiting for the headers,
+/// or while reading the body. Which of the three it was is not worth a word:
+/// the number is the thing to act on, and it is the one to hold against the
+/// proxy's own.
+///
+/// reqwest's text is deliberately NOT repeated here. It would add nothing but
+/// the URL, and this message already names the path.
+fn timed_out(service: &str, path: &str, deadline: Duration) -> anyhow::Error {
+    // `{deadline:?}` renders a Duration as `120s` or `150ms`.
+    anyhow::anyhow!("{service}: {path} did not answer within {deadline:?}")
+}
+
+/// The request never got as far as an answer: no DNS, refused, no route, or
+/// the deadline expired before any headers arrived.
 ///
 /// REQWEST'S OWN TEXT IS SAFE TO REPEAT HERE, and that was checked rather
 /// than assumed (reqwest 0.13.4, `src/error.rs`): `Display` writes the kind
 /// ("error sending request", "request or response body error", "error
 /// decoding response body"), then ` for url (...)`, and then stops -- it
-/// prints neither the response body nor the source chain. The URL is this
-/// bot's own `radarr_url`/`sonarr_url` plus a path built from an id; the API
-/// key travels in the `X-Api-Key` HEADER and is never part of it. Serde's
-/// message, which quotes the offending value, stays out on the other branch.
-fn transport_failure(
-    service: &str,
-    path: &str,
-    deadline: Duration,
-    e: reqwest::Error,
-) -> anyhow::Error {
+/// prints neither the response body nor the source chain. There is no body
+/// to leak at this point in any case. The URL is this bot's own
+/// `radarr_url`/`sonarr_url` plus a path built from an id; the API key
+/// travels in the `X-Api-Key` HEADER and is never part of it. Serde's
+/// message, which quotes the offending value, never comes through here at
+/// all -- it cannot reach this far.
+fn send_failure(service: &str, path: &str, deadline: Duration, e: reqwest::Error) -> anyhow::Error {
     if e.is_timeout() {
-        // `{deadline:?}` renders a Duration as `120s` or `150ms` -- the
-        // number the operator has to compare against the proxy's own.
-        anyhow::anyhow!("{service}: {path} did not answer within {deadline:?}")
+        timed_out(service, path, deadline)
     } else {
-        anyhow::anyhow!("{service}: {path} failed while reading the answer: {e}")
+        anyhow::anyhow!("{service}: {path} could not be reached: {e}")
     }
 }
 
