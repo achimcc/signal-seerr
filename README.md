@@ -298,7 +298,7 @@ anybody.
 
 **A series gets no reason search.** Sonarr has no equivalent of Radarr's
 per-movie interactive search here, so a series is judged from its queue and
-its history only: it can be *here*, *part of it is here*, *downloading*,
+its history only: it can be *available*, *part of it is here*, *downloading*,
 *stuck on the last step*, *one attempt failed*, or *waiting* — but never
 "only available in …". That is a limit of what was measured, not a gap
 waiting to be filled with a guess.
