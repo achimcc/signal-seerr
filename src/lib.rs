@@ -1,4 +1,5 @@
 pub mod arr;
+pub mod bell;
 pub mod config;
 pub mod dialog;
 pub mod directory;

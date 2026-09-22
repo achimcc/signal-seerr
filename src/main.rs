@@ -309,6 +309,21 @@ async fn main() -> Result<()> {
 
     // 2. The webhook listener.
     let webhook_task = {
+        // treff's bell, if configured. Built here so a bad URL stops the bot
+        // at startup rather than on the first film.
+        let bell: Option<Arc<dyn signal_seerr::bell::Bell>> = match (
+            &config.treff,
+            secrets.treff_token.clone(),
+        ) {
+            (Some(treff), Some(token)) => {
+                tracing::info!(url = %treff.events_url, "availability notices also go to treff");
+                Some(Arc::new(signal_seerr::bell::TreffBell::new(
+                    treff.events_url.clone(),
+                    token,
+                )?))
+            }
+            _ => None,
+        };
         let app = webhook::router(webhook::WebhookState {
             messenger: signal.clone(),
             seerr: seerr.clone(),
@@ -316,6 +331,7 @@ async fn main() -> Result<()> {
             catalogue: catalogue.clone(),
             token: Arc::new(secrets.webhook_token),
             jellyfin_url: config.jellyfin_url.clone(),
+            bell,
         });
         let listener = tokio::net::TcpListener::bind(config.webhook_listen).await?;
         tokio::spawn(async move {

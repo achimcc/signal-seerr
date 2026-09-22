@@ -66,6 +66,8 @@ pub struct WebhookState {
     pub catalogue: Arc<Catalogue>,
     pub token: Arc<Secret>,
     pub jellyfin_url: String,
+    /// treff's bell, if configured (`[treff]`, see `bell`).
+    pub bell: Option<Arc<dyn crate::bell::Bell>>,
 }
 
 /// One line, and not an endless one: control characters (a newline above all)
@@ -149,18 +151,6 @@ async fn handle(
         }
     };
 
-    let entry = {
-        let directory = state
-            .directory
-            .read()
-            .expect("the mapping lock is never poisoned");
-        directory.by_user(&username).cloned()
-    };
-    let Some(entry) = entry else {
-        tracing::info!(username, "requester has no signal name");
-        return StatusCode::OK;
-    };
-
     // THE TITLE COMES FROM SEERR, NOT FROM THE BODY (audit finding B43c).
     // `payload.subject` is text that whoever holds the webhook token chooses,
     // and it went into a message to a person verbatim -- newlines included,
@@ -176,6 +166,47 @@ async fn handle(
         }
     };
     let title = one_line(&title);
+
+    // THE BELL IN TREFF, before the Signal name is looked up: somebody who
+    // never linked Signal still has a bell. Its own task, so a slow or absent
+    // treff holds up neither Seerr's answer nor the Signal message.
+    if let Some(bell) = state.bell.clone() {
+        let event = crate::bell::BellEvent {
+            handle: username.clone(),
+            kind: if key == "available.ready" {
+                "film_available"
+            } else {
+                "film_failed"
+            },
+            title: title.clone(),
+            link: Some(state.jellyfin_url.clone()),
+            source_key: format!("seerr:{request_id}"),
+        };
+        let ring = async move {
+            if let Err(e) = bell.ring(&event).await {
+                tracing::warn!(error = %e, "treff did not take the event");
+            }
+        };
+        // In a test the ring is awaited, so the test can see it happened;
+        // in the service it runs beside the Signal message.
+        if cfg!(test) {
+            ring.await;
+        } else {
+            tokio::spawn(ring);
+        }
+    }
+
+    let entry = {
+        let directory = state
+            .directory
+            .read()
+            .expect("the mapping lock is never poisoned");
+        directory.by_user(&username).cloned()
+    };
+    let Some(entry) = entry else {
+        tracing::info!(username, "requester has no signal name");
+        return StatusCode::OK;
+    };
 
     let text = state.catalogue.text(
         entry.locale,
@@ -310,6 +341,39 @@ mod tests {
     }
 
     fn test_app_with_title(title: Option<String>) -> (Router, SentLog) {
+        let (app, sent, _) = test_app_with_bell(title, Arc::new(RecordingBell::default()));
+        (app, sent)
+    }
+
+    /// What `RecordingBell` was asked to ring.
+    type RungLog = Arc<Mutex<Vec<crate::bell::BellEvent>>>;
+
+    #[derive(Default)]
+    struct RecordingBell {
+        rung: RungLog,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::bell::Bell for RecordingBell {
+        async fn ring(&self, event: &crate::bell::BellEvent) -> anyhow::Result<()> {
+            self.rung.lock().unwrap().push(event.clone());
+            Ok(())
+        }
+    }
+
+    struct FailingBell;
+
+    #[async_trait::async_trait]
+    impl crate::bell::Bell for FailingBell {
+        async fn ring(&self, _event: &crate::bell::BellEvent) -> anyhow::Result<()> {
+            anyhow::bail!("treff is down")
+        }
+    }
+
+    fn test_app_with_bell(
+        title: Option<String>,
+        bell: Arc<dyn crate::bell::Bell>,
+    ) -> (Router, SentLog, ()) {
         let sent: SentLog = Arc::new(Mutex::new(Vec::new()));
         let messenger = Arc::new(SharedMessenger { sent: sent.clone() });
 
@@ -324,8 +388,74 @@ mod tests {
             catalogue: Arc::new(Catalogue::load()),
             token: Arc::new(Secret::from("t-o-k-e-n".to_string())),
             jellyfin_url: "https://jellyfin.example.org".to_string(),
+            bell: Some(bell),
         };
-        (router(webhook_state), sent)
+        (router(webhook_state), sent, ())
+    }
+
+    fn post(event: &str, request_id: i64) -> Request<Body> {
+        Request::post("/seerr")
+            .header("X-Webhook-Token", "t-o-k-e-n")
+            .header("content-type", "application/json")
+            .body(body(event, request_id))
+            .unwrap()
+    }
+
+    /// THE BELL IN TREFF: the same news, for the same person, with the same
+    /// title and the Jellyfin link.
+    #[tokio::test]
+    async fn media_available_rings_the_bell_in_treff() {
+        let bell = Arc::new(RecordingBell::default());
+        let rung = bell.rung.clone();
+        let (app, sent, _) = test_app_with_bell(None, bell);
+        let response = app.oneshot(post("MEDIA_AVAILABLE", 1849)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let rung = rung.lock().unwrap();
+        assert_eq!(
+            *rung,
+            vec![crate::bell::BellEvent {
+                handle: "robert".into(),
+                kind: "film_available",
+                title: "Blade Runner 2049 (2017)".into(),
+                link: Some("https://jellyfin.example.org".into()),
+                source_key: "seerr:1849".into(),
+            }]
+        );
+        assert_eq!(sent.lock().unwrap().len(), 1, "and Signal as before");
+    }
+
+    #[tokio::test]
+    async fn media_failed_rings_as_failed() {
+        let bell = Arc::new(RecordingBell::default());
+        let rung = bell.rung.clone();
+        let (app, _, _) = test_app_with_bell(None, bell);
+        app.oneshot(post("MEDIA_FAILED", 1849)).await.unwrap();
+        assert_eq!(rung.lock().unwrap()[0].kind, "film_failed");
+    }
+
+    /// Somebody who never linked Signal still has a bell: the event goes out
+    /// before the Signal name is even looked up.
+    #[tokio::test]
+    async fn a_requester_without_signal_still_gets_the_bell() {
+        let bell = Arc::new(RecordingBell::default());
+        let rung = bell.rung.clone();
+        let (app, sent, _) = test_app_with_bell(None, bell);
+        app.oneshot(post("MEDIA_AVAILABLE", 4242)).await.unwrap();
+        assert!(
+            sent.lock().unwrap().is_empty(),
+            "no Signal name, no message"
+        );
+        assert_eq!(rung.lock().unwrap().len(), 1);
+        assert_eq!(rung.lock().unwrap()[0].handle, "konrad");
+    }
+
+    /// treff being down is not a reason to keep the Signal message back.
+    #[tokio::test]
+    async fn a_bell_that_fails_does_not_hold_up_signal() {
+        let (app, sent, _) = test_app_with_bell(None, Arc::new(FailingBell));
+        let response = app.oneshot(post("MEDIA_AVAILABLE", 1849)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(sent.lock().unwrap().len(), 1);
     }
 
     /// A `Messenger` that appends every send to a shared, externally visible
@@ -537,6 +667,7 @@ mod tests {
             catalogue: Arc::new(Catalogue::load()),
             token: Arc::new(Secret::from("t-o-k-e-n".to_string())),
             jellyfin_url: "https://jellyfin.example.org".to_string(),
+            bell: None,
         };
         let app = router(webhook_state);
 

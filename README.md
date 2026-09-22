@@ -274,6 +274,25 @@ every wish all over again. In that case the bot logs it, keeps answering
 `/status`, and simply does not run the unasked loop until somebody has looked
 at the file.
 
+### treff's bell
+
+The optional `[treff]` section hands every availability notice — *available*
+and *failed* — to [treff](https://github.com/achimcc/treff), the forum on the
+same server, whose bell shows it on the forum and on the server's start page:
+
+```toml
+[treff]
+events_url = "http://192.0.2.50:8081/internal/events"
+token_file = "/run/credentials/signal-seerr.service/treff-events"
+```
+
+It goes out whether or not the person has a Signal name — somebody who never
+linked Signal still has a bell — and neither channel holds up the other: a
+treff that does not answer is logged and tried once more, the Signal message
+goes out regardless. The person is named by their Seerr (= Jellyfin) user
+name, which is treff's handle for them; `seerr:<request id>` keeps a webhook
+that arrives twice one entry. Leave the section out and nothing is sent.
+
 ### What `reason_search` costs
 
 Off by default, and that is not timidity. Switched on, it lets the bot run

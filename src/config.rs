@@ -46,6 +46,19 @@ pub struct Config {
     /// before insight existed.
     #[serde(default)]
     pub insight: Option<InsightConfig>,
+    /// treff's bell (the forum on the same server): availability notices go
+    /// there too. Optional; without it the bot behaves as before.
+    #[serde(default)]
+    pub treff: Option<TreffConfig>,
+}
+
+/// Where treff takes events, and the token for it.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TreffConfig {
+    /// `http://<treff>:<port>/internal/events` — treff's internal listener.
+    pub events_url: String,
+    pub token_file: PathBuf,
 }
 
 impl Config {
@@ -56,6 +69,9 @@ impl Config {
             .with_context(|| format!("cannot parse config {}", path.display()))?;
         reject_missing_scheme("authentik_url", &cfg.authentik_url)?;
         reject_missing_scheme("seerr_url", &cfg.seerr_url)?;
+        if let Some(treff) = &cfg.treff {
+            reject_missing_scheme("treff.events_url", &treff.events_url)?;
+        }
         if let Some(insight) = &cfg.insight {
             validate_insight(insight)?;
             reject_missing_scheme("insight.radarr_url", &insight.radarr_url)?;
@@ -97,6 +113,7 @@ impl Config {
             operator_name: "the operator".into(),
             quality_profiles: Vec::new(),
             insight: None,
+            treff: None,
         }
     }
 }
@@ -202,6 +219,8 @@ pub struct Secrets {
     pub radarr_key: Option<Secret>,
     /// Read only when `[insight]` is configured AND names a `sonarr_url`.
     pub sonarr_key: Option<Secret>,
+    /// Read only when `[treff]` is configured.
+    pub treff_token: Option<Secret>,
 }
 
 impl Secrets {
@@ -225,6 +244,11 @@ impl Secrets {
             webhook_token: read_one(&config.webhook_token_file)?,
             radarr_key,
             sonarr_key,
+            treff_token: config
+                .treff
+                .as_ref()
+                .map(|t| read_one(&t.token_file))
+                .transpose()?,
         })
     }
 }
