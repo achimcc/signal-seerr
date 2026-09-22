@@ -180,6 +180,13 @@ impl SeerrClient {
             key,
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(20))
+                // A redirect carries our own headers onwards. reqwest strips
+                // `Authorization` when the host changes; `X-Api-Key` and
+                // `X-API-User` are not headers it knows about, so they would
+                // be sent to wherever the redirect points -- and that key is
+                // a Seerr administrator. Nothing this bot calls redirects,
+                // so refusing is free.
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect(
                     "could not build the HTTP client -- rustls-platform-verifier reads the \

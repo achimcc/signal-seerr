@@ -85,19 +85,40 @@ struct InsightParts {
     watcher: Option<Watcher>,
 }
 
+/// A year of hours. Nothing sensible sits above it -- a deadline a wish can
+/// never reach is the same thing as switching the unasked message off -- and
+/// it keeps the conversion below far away from the point where
+/// `time::Duration::hours` panics on overflow.
+const MAX_STALL_AFTER_HOURS: i64 = 24 * 365;
+
 /// The watcher's settings from the `[insight]` section.
 ///
 /// Pure, and on its own, so the one conversion in the whole wiring that
 /// could be silently wrong -- a count of hours into a `time::Duration` -- is
 /// tested without building an HTTP client or a runtime. Seconds instead of
 /// hours here would make the bot announce every open wish within the minute.
-fn watch_settings(insight: &InsightConfig) -> WatchSettings {
-    WatchSettings {
-        stall_after: time::Duration::hours(insight.stall_after_hours as i64),
+///
+/// FALLIBLE, not panicking: `stall_after_hours` is a `u64` out of a config
+/// file, `as i64` would wrap a large one into a negative deadline, and
+/// `time::Duration::hours` panics outright on an overflow. A typo in a TOML
+/// file deserves a named error at startup, not a backtrace.
+fn watch_settings(insight: &InsightConfig) -> Result<WatchSettings> {
+    let hours = i64::try_from(insight.stall_after_hours)
+        .ok()
+        .filter(|hours| *hours <= MAX_STALL_AFTER_HOURS)
+        .with_context(|| {
+            format!(
+                "stall_after_hours = {} is out of range: it must be at most \
+                 {MAX_STALL_AFTER_HOURS} (a year)",
+                insight.stall_after_hours
+            )
+        })?;
+    Ok(WatchSettings {
+        stall_after: time::Duration::hours(hours),
         max_searches_per_day: insight.max_reason_searches_per_day,
         notices_file: insight.notices_file.clone(),
         profile_languages: insight.profile_languages.clone(),
-    }
+    })
 }
 
 /// Builds the arr client, loads the record, and assembles the watcher --
@@ -116,7 +137,12 @@ fn insight_parts(
     messenger: Arc<dyn Messenger>,
     directory: Arc<RwLock<State>>,
     catalogue: Arc<Catalogue>,
-) -> InsightParts {
+) -> Result<InsightParts> {
+    // BEFORE anything is built: a `stall_after_hours` out of range is a
+    // misconfiguration that has to stop the start, not one that surfaces
+    // ten minutes later on the first tick.
+    let settings = watch_settings(insight)?;
+
     // `zip`, not two separate options: `config.rs` has already rejected a
     // URL without its key file and vice versa, so either both are here or
     // neither is.
@@ -148,14 +174,14 @@ fn insight_parts(
         directory,
         notices,
         catalogue,
-        settings: watch_settings(insight),
+        settings,
     });
 
-    InsightParts {
+    Ok(InsightParts {
         insight: Some(arr as Arc<dyn Insight>),
         notices,
         watcher,
-    }
+    })
 }
 
 #[tokio::main]
@@ -212,7 +238,7 @@ async fn main() -> Result<()> {
                 signal.clone() as Arc<dyn Messenger>,
                 state.clone(),
                 catalogue.clone(),
-            )
+            )?
         }
     };
 
@@ -422,13 +448,34 @@ mod watch_settings_tests {
         // The whole point of this test: hours, not seconds and not minutes.
         // Either of those would leave the deadline looking plausible in the
         // config while the bot announces every open wish within the minute.
-        let settings = watch_settings(&insight_config());
+        let settings = watch_settings(&insight_config()).unwrap();
         assert_eq!(settings.stall_after, time::Duration::hours(36));
+    }
+
+    /// A year of hours is the ceiling, and past it the start fails by name.
+    /// `as i64` used to carry the number straight into
+    /// `time::Duration::hours`, which panics on overflow -- a TOML typo
+    /// became a backtrace with no field name in it.
+    #[test]
+    fn a_stall_deadline_out_of_range_is_a_named_error_not_a_panic() {
+        let mut config = insight_config();
+        config.stall_after_hours = super::MAX_STALL_AFTER_HOURS as u64 + 1;
+        let err = watch_settings(&config).unwrap_err().to_string();
+        assert!(err.contains("stall_after_hours"), "got: {err}");
+
+        // The value that used to panic: `u64::MAX` is negative as an `i64`,
+        // and `Duration::hours` refuses it either way.
+        config.stall_after_hours = u64::MAX;
+        assert!(watch_settings(&config).is_err());
+
+        // And the ceiling itself is still accepted.
+        config.stall_after_hours = super::MAX_STALL_AFTER_HOURS as u64;
+        assert!(watch_settings(&config).is_ok());
     }
 
     #[test]
     fn the_budget_the_file_and_the_languages_are_carried_over_unchanged() {
-        let settings = watch_settings(&insight_config());
+        let settings = watch_settings(&insight_config()).unwrap();
         assert_eq!(settings.max_searches_per_day, 7);
         assert_eq!(
             settings.notices_file,

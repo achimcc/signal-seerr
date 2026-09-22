@@ -105,6 +105,9 @@ struct FakeArr {
     movies: Mutex<Vec<(i64, ArrMovie)>>,
     queue: Mutex<Vec<(MediaKind, QueueItem)>>,
     event: Option<HistoryEvent>,
+    /// `last_event` fails -- Radarr answered about the film and then not
+    /// about its history, which is one timeout away from ordinary.
+    last_event_fail: bool,
     releases: Vec<Release>,
     releases_fail: bool,
     movie_calls: AtomicUsize,
@@ -140,6 +143,9 @@ impl Insight for FakeArr {
     }
     async fn last_event(&self, _kind: MediaKind, _id: i64) -> anyhow::Result<Option<HistoryEvent>> {
         self.last_event_calls.fetch_add(1, Ordering::SeqCst);
+        if self.last_event_fail {
+            anyhow::bail!("radarr's history is unreachable");
+        }
         Ok(self.event)
     }
 }
@@ -975,6 +981,42 @@ async fn a_wish_whose_first_lookup_failed_does_not_restart_its_clock_either() {
     assert_eq!(
         report.notices_sent, 1,
         "one failed lookup must not cost the person a further day"
+    );
+}
+
+/// 19. And the same clock, lost the other way round: Radarr answered about
+///     the film -- "not out yet", the one observation the clock runs on --
+///     and then failed on the history. The round gives up on the wish, and
+///     it should; but the observation was already made, and throwing it
+///     away means the NEXT round has no record that the film was ever
+///     unreleased, which is another whole `stall_after` of silence.
+#[tokio::test]
+async fn an_observation_survives_a_failure_of_the_call_after_it() {
+    let h = harness(Setup {
+        seerr: FakeSeerr {
+            title: Some(TITLE.into()),
+            ..Default::default()
+        },
+        arr: FakeArr {
+            movies: Mutex::new(vec![(401, not_released())]),
+            last_event_fail: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    h.set_wishes(vec![movie_wish(1)]);
+
+    assert_eq!(h.watcher.round(NOW).await.notices_sent, 0);
+
+    let notices = h.notices.read().unwrap();
+    let note = notices.note(1).unwrap();
+    assert!(
+        note.seen_unreleased,
+        "the film WAS seen unreleased, whatever the next call did"
+    );
+    assert!(
+        note.released_seen.is_none(),
+        "and it has not become available, so no clock starts yet"
     );
 }
 

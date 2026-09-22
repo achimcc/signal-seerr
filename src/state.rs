@@ -8,11 +8,40 @@ use std::path::Path;
 /// untouched instead of a truncated file -- shared by every on-disk record
 /// in this crate (`State::save`, `notices::Notices::save`), one
 /// implementation instead of two.
+///
+/// TWO `fsync`s, AND THEY ARE NOT DECORATION. `rename` is atomic with
+/// respect to other readers, but it says nothing about what has reached the
+/// disk: after a power cut the new name can point at a file whose DATA never
+/// got written, i.e. at zero bytes. For the notices record that is exactly
+/// the failure this crate refuses to allow anywhere else -- an empty record
+/// is not "nothing said yet", it is the loss of everything already said, and
+/// the loop that speaks up unasked would tell the whole household about
+/// every wish all over again. So: the contents are flushed before the
+/// rename, and the DIRECTORY is flushed after it, because the new name is a
+/// directory entry and survives no better than the data did.
 pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+
     let temp = path.with_extension("json.new");
-    std::fs::write(&temp, bytes).with_context(|| format!("cannot write {}", temp.display()))?;
+    {
+        let mut file = std::fs::File::create(&temp)
+            .with_context(|| format!("cannot write {}", temp.display()))?;
+        file.write_all(bytes)
+            .with_context(|| format!("cannot write {}", temp.display()))?;
+        file.sync_all()
+            .with_context(|| format!("cannot flush {}", temp.display()))?;
+    }
     std::fs::rename(&temp, path)
         .with_context(|| format!("cannot rename onto {}", path.display()))?;
+    // `parent()` of a bare file name is `Some("")`, which opens nothing --
+    // the directory to flush is then the working directory.
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .with_context(|| format!("cannot flush the directory {}", dir.display()))?;
     Ok(())
 }
 

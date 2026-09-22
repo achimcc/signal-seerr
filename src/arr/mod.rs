@@ -130,6 +130,13 @@ impl ArrClient {
             sonarr: sonarr.map(|(url, key)| (url.to_string(), key)),
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(20))
+                // A redirect carries our own headers onwards. reqwest strips
+                // `Authorization` when the host changes; `X-Api-Key` is not a
+                // header it knows about, so it is sent to wherever the
+                // redirect points -- and this one is full write access to
+                // Radarr. Nothing this bot calls redirects, so refusing is
+                // free.
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect(
                     "could not build the HTTP client -- rustls-platform-verifier reads the \

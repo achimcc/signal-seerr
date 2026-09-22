@@ -232,6 +232,48 @@ impl Watcher {
                         return outcome;
                     }
                 }
+                // RECORDED BEFORE THE NEXT CALL CAN FAIL, and that placement
+                // is the whole point: this block sat below the history
+                // lookup, which returns early on an error, so a Radarr that
+                // answered `movie()` and then failed on the history threw
+                // away an observation it had already made. The next round
+                // would have no record that the film was ever unreleased --
+                // and `seen_unreleased` is the only evidence for the
+                // transition the clock below runs on.
+                //
+                // The deadline for a film nobody could have got yet runs
+                // from the day it became available, not from the day
+                // somebody asked.
+                //
+                // The clock is only ever moved forward on an OBSERVED
+                // transition, and the evidence for one is `seen_unreleased`:
+                // some round really did look and really did find the film
+                // not out yet. Anything else -- a first round that saw a
+                // queue entry and so never called `movie()`, or one that
+                // gave up on a Radarr error -- leaves the base at
+                // `created_at` (design §5.1: "bei einem beim Wunsch schon
+                // erschienenen Film ist das createdAt"). Deriving it from
+                // the note's mere existence looked equivalent and is not: in
+                // both of those histories the wish has been stuck for days,
+                // and reading the first sight of `is_available` as a
+                // transition would cost the person another whole
+                // `stall_after` in silence.
+                match movie.as_ref().map(|m| m.is_available) {
+                    Some(false) if !seen_unreleased => {
+                        self.notices_mut().note_mut(wish.id, now).seen_unreleased = true;
+                    }
+                    Some(true) if released_seen.is_none() => {
+                        let seen_at = if seen_unreleased {
+                            now
+                        } else {
+                            wish.created_at
+                        };
+                        self.notices_mut().note_mut(wish.id, now).released_seen = Some(seen_at);
+                        released_seen = Some(seen_at);
+                    }
+                    _ => {}
+                }
+
                 match self.insight.last_event(MediaKind::Movie, arr_id).await {
                     Ok(found) => last_event = found,
                     Err(e) => {
@@ -240,36 +282,6 @@ impl Watcher {
                     }
                 }
             }
-        }
-
-        // The deadline for a film nobody could have got yet runs from the
-        // day it became available, not from the day somebody asked.
-        //
-        // The clock is only ever moved forward on an OBSERVED transition,
-        // and the evidence for one is `seen_unreleased`: some round really
-        // did look and really did find the film not out yet. Anything else
-        // -- a first round that saw a queue entry and so never called
-        // `movie()`, or one that gave up on a Radarr error -- leaves the
-        // base at `created_at` (design §5.1: "bei einem beim Wunsch schon
-        // erschienenen Film ist das createdAt"). Deriving it from the note's
-        // mere existence looked equivalent and is not: in both of those
-        // histories the wish has been stuck for days, and reading the first
-        // sight of `is_available` as a transition would cost the person
-        // another whole `stall_after` in silence.
-        match movie.as_ref().map(|m| m.is_available) {
-            Some(false) if !seen_unreleased => {
-                self.notices_mut().note_mut(wish.id, now).seen_unreleased = true;
-            }
-            Some(true) if released_seen.is_none() => {
-                let seen_at = if seen_unreleased {
-                    now
-                } else {
-                    wish.created_at
-                };
-                self.notices_mut().note_mut(wish.id, now).released_seen = Some(seen_at);
-                released_seen = Some(seen_at);
-            }
-            _ => {}
         }
 
         let mut state = classify(
