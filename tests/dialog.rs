@@ -626,6 +626,7 @@ async fn status_lists_what_is_still_on_its_way() {
                 created_at: time::OffsetDateTime::UNIX_EPOCH,
                 profile_name: None,
                 requested_by: None,
+                download_percent: None,
             }])
         }
         async fn open_wishes(&self) -> anyhow::Result<Vec<Wish>> {
@@ -1165,6 +1166,7 @@ fn wish(id: i64, arr_id: Option<i64>) -> Wish {
         created_at: now(),
         profile_name: None,
         requested_by: None,
+        download_percent: None,
     }
 }
 
@@ -1376,6 +1378,36 @@ async fn without_insight_the_bot_does_not_claim_to_be_searching() {
     assert!(
         !out.contains(&catalogue.text(Locale::De, "status.searching", &[])),
         "a claim about a search nobody measured: {out}"
+    );
+}
+
+/// (e2) Without any Radarr insight, Seerr's OWN account of a download
+/// (`media.downloadStatus`) is still shown: it is the one piece of download
+/// evidence that exists without `[insight]` configured at all, and it must
+/// not be drowned out by the plain "waiting" this whole task removed from
+/// every other case.
+#[tokio::test]
+async fn without_insight_seerrs_own_download_percent_is_shown() {
+    let seerr = FakeSeerr {
+        wishes: vec![Wish {
+            download_percent: Some(54),
+            ..wish(1849, Some(42))
+        }],
+        title: Some("Arrival".into()),
+        ..Default::default()
+    };
+    let mut d = status_dialog(seerr, None, None);
+
+    let out = d.handle(&Aci("aaaa".into()), "/status").await.join("\n");
+
+    let catalogue = Catalogue::load();
+    assert!(
+        out.contains(&catalogue.text(Locale::De, "status.downloading", &[("percent", "54")])),
+        "got: {out}"
+    );
+    assert!(
+        !out.contains(&catalogue.text(Locale::De, "status.waiting", &[])),
+        "seerr's own account of a download must win over the plain wait: {out}"
     );
 }
 

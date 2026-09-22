@@ -67,6 +67,13 @@ pub struct Wish {
     pub profile_name: Option<String>,
     /// `requestedBy.jellyfinUsername` -- the one identity source (see CLAUDE.md).
     pub requested_by: Option<String>,
+    /// How far along Seerr itself says a download is, from
+    /// `media.downloadStatus[].{size,sizeLeft}` where an entry's `status` is
+    /// `"downloading"` (recorded 2026-09-22, see `tests/fixtures/README.md`).
+    /// This is Seerr's OWN account of the download, independent of Radarr's
+    /// queue -- the only download evidence available where no `[insight]`
+    /// is configured at all.
+    pub download_percent: Option<u8>,
 }
 
 /// Why a wish's search never found a suitable release. Comes only from

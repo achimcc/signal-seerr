@@ -79,13 +79,23 @@ pub trait ReleaseSearch: Send + Sync {
     async fn releases(&self, movie_id: i64) -> Result<Vec<Release>>;
 }
 
-/// Which of `trackedDownloadState`'s values means an import is stuck, as
-/// opposed to merely still downloading, has not been recorded from a running
-/// instance yet -- and this project never guesses a wire value. Every queue
-/// item is therefore `Downloading` until a recording exists to tell the two
-/// apart.
-fn queue_state(_tracked: Option<&str>) -> QueueState {
-    QueueState::Downloading
+/// Which of `trackedDownloadState`'s values means a download in progress, as
+/// opposed to an import stuck, mapped only from what a running instance has
+/// actually sent -- this project never guesses a wire value.
+///
+/// `"downloading"` is recorded (`radarr-queue-downloading.json`, see
+/// `tests/fixtures/README.md`) and means `QueueState::Downloading`.
+/// `QueueState::ImportStuck` stays unreachable: which value
+/// `trackedDownloadState` carries for a stuck import has **not** been
+/// recorded yet, so nothing here claims to know it. Every other value --
+/// including one never seen at all -- keeps the same answer, `Downloading`,
+/// for the same reason: there is nothing recorded that says otherwise.
+fn queue_state(tracked: Option<&str>) -> QueueState {
+    match tracked {
+        Some("downloading") => QueueState::Downloading,
+        // No recording tells the two apart yet -- see the doc comment above.
+        _ => QueueState::Downloading,
+    }
 }
 
 fn map_event_type(event_type: &str) -> HistoryEvent {

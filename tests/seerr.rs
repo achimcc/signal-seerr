@@ -217,6 +217,11 @@ async fn withdrawing_somebody_elses_request_is_refused_before_it_is_sent() {
 /// `request_id` type and an invented `media.title` field.
 const USER_REQUESTS: &str = include_str!("fixtures/seerr-user-requests.json");
 const REQUEST_ALL: &str = include_str!("fixtures/seerr-request-all.json");
+/// Recorded on 2026-09-22 while the same real download from
+/// `tests/fixtures/radarr-queue-downloading.json` was in progress -- the
+/// first `media.downloadStatus` entry this project has ever actually seen.
+const USER_REQUESTS_DOWNLOADING: &str =
+    include_str!("fixtures/seerr-user-requests-downloading.json");
 
 #[tokio::test]
 async fn pending_reads_the_recorded_wire_format() {
@@ -245,6 +250,51 @@ async fn pending_reads_the_recorded_wire_format() {
         .requested_by
         .as_deref()
         .is_some_and(|u| u.starts_with("person-"))));
+}
+
+/// Seerr's OWN account of a download (`media.downloadStatus`), which is the
+/// only download evidence available where no `[insight]` is configured at
+/// all. `percent` is computed here from the recording's own `size`/
+/// `sizeLeft`, not hard-coded.
+#[tokio::test]
+async fn pending_reads_seerrs_own_download_percent() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/user/1/requests"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(USER_REQUESTS_DOWNLOADING, "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let wishes = client(&server).pending(SeerrUserId(1)).await.unwrap();
+
+    let raw: serde_json::Value = serde_json::from_str(USER_REQUESTS_DOWNLOADING).unwrap();
+    let entry = raw["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| {
+            r["media"]["downloadStatus"]
+                .as_array()
+                .is_some_and(|d| !d.is_empty())
+        })
+        .expect("the recording carries exactly one wish with a downloadStatus entry");
+    let status = &entry["media"]["downloadStatus"][0];
+    let size = status["size"].as_f64().unwrap();
+    let size_left = status["sizeLeft"].as_f64().unwrap();
+    let expected_percent = ((size - size_left) / size * 100.0) as u8;
+    let id = entry["id"].as_i64().unwrap();
+
+    let wish = wishes.iter().find(|w| w.id == id).unwrap();
+    assert_eq!(wish.download_percent, Some(expected_percent));
+    assert!(
+        wishes
+            .iter()
+            .filter(|w| w.id != id)
+            .all(|w| w.download_percent.is_none()),
+        "only the one wish Seerr reports downloading may carry a percent"
+    );
 }
 
 /// `GET /api/v1/user/{id}/requests` above is scoped to one person and never

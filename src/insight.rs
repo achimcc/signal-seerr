@@ -170,6 +170,7 @@ mod tests {
             created_at: time::OffsetDateTime::UNIX_EPOCH,
             profile_name: None,
             requested_by: None,
+            download_percent: None,
         }
     }
 

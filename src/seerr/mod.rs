@@ -134,6 +134,36 @@ fn wish_from(r: &serde_json::Value) -> Option<Wish> {
             .and_then(|u| u.get("jellyfinUsername"))
             .and_then(|v| v.as_str())
             .map(str::to_string),
+        download_percent: download_percent_from(media),
+    })
+}
+
+/// Seerr's own account of a download, from `media.downloadStatus` --
+/// recorded 2026-09-22 (`seerr-user-requests-downloading.json`, see
+/// `tests/fixtures/README.md`): an array, one entry per download, each with
+/// `status`, `size`, `sizeLeft` and fields never read here (`title`,
+/// `downloadId`, `estimatedCompletionTime`, `timeLeft`) so those never end up
+/// deserialised, logged, or in a message.
+///
+/// The first entry whose `status` is `"downloading"` wins; a household is
+/// never shown two competing percentages for one wish, and Seerr has not
+/// been observed sending more than one entry at a time. `size == 0` answers
+/// 0 rather than dividing by it.
+fn download_percent_from(media: &serde_json::Value) -> Option<u8> {
+    let entry = media
+        .get("downloadStatus")?
+        .as_array()?
+        .iter()
+        .find(|d| d.get("status").and_then(|v| v.as_str()) == Some("downloading"))?;
+    let size = entry.get("size").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let size_left = entry
+        .get("sizeLeft")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    Some(if size > 0.0 {
+        ((size - size_left) / size * 100.0) as u8
+    } else {
+        0
     })
 }
 
@@ -579,6 +609,7 @@ mod arc_requests_tests {
                 created_at: time::OffsetDateTime::UNIX_EPOCH,
                 profile_name: None,
                 requested_by: Some("canned-requester".into()),
+                download_percent: None,
             }])
         }
         async fn open_wishes(&self) -> Result<Vec<Wish>> {

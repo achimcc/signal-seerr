@@ -187,6 +187,7 @@ fn movie_wish(id: i64) -> Wish {
         created_at: hours_ago(25),
         profile_name: Some(PROFILE.to_string()),
         requested_by: Some("robert".to_string()),
+        download_percent: None,
     }
 }
 

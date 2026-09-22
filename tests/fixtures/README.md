@@ -34,8 +34,12 @@ and none with reality. It happened a second time with `media.title`, which
 | `radarr-history-movie-download-failed.json` | `GET /api/v3/history/movie?movieId={id}` for a film with a `downloadFailed` event | `sourceTitle`, `quality`, `languages`, all of `data` except `reason` (indexer, download client, release name, message) |
 | `radarr-history-movie-empty.json` | same, for a film nothing was ever grabbed for | — |
 | `radarr-queue-empty.json` | `GET /api/v3/queue?pageSize=200&includeMovie=false`, nothing downloading | — |
+| `radarr-queue-downloading.json` | same, one movie downloading (recorded **2026-09-22**) | everything except `movieId`, `size`, `sizeleft`, `status`, `trackedDownloadStatus`, `trackedDownloadState`, `statusMessages[].messages` (`title`, `outputPath`, `indexer`, `downloadClient`, `downloadId` dropped; `statusMessages[].title` replaced with `"x"`) |
 | `radarr-release-all-rejected-language.json` | `GET /api/v3/release?movieId={id}` — **an interactive search at every indexer; recorded once, never re-recorded casually** | `guid`, `downloadUrl`, `infoUrl`, `indexer`, `title`, `releaseGroup`, and everything else except `rejected`, `temporarilyRejected`, `approved`, `rejections`, `languages[].{id,name}`, `quality.quality.name`, `size`, `protocol`, `customFormatScore`; the film's title inside one rejection sentence was replaced |
+| `seerr-user-requests-downloading.json` | `GET /api/v1/user/1/requests?take=50`, taken during the same download as `radarr-queue-downloading.json` (recorded **2026-09-22**) | same as `seerr-user-requests.json`, plus `media.downloadStatus[].title` replaced with `"x"` and `downloadId` zeroed |
 
-**Not recorded yet, and therefore not built:** a queue with a running
-download, a queue entry stuck in import, and Seerr's `media.downloadStatus`
-while something downloads. The queue was empty every time anybody looked.
+**Not recorded yet, and therefore not built:** a queue entry stuck in
+import. Nobody has yet seen what Radarr/Sonarr call an import stuck in
+`trackedDownloadState`, so `QueueState::ImportStuck` stays unreachable (see
+the doc comment on `queue_state` in `src/arr/mod.rs`) -- this project never
+guesses a wire value.

@@ -808,11 +808,19 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
     /// no sight of the *arr, a search is something this bot has no knowledge
     /// of, and claiming one is how `/status` came to answer "wird geholt"
     /// for a film nobody could fetch.
+    ///
+    /// `download_percent` sits above `PartlyAvailable`, the same order
+    /// `classify` puts a queue item in: something coming down right now says
+    /// more than "half of it is here". It is Seerr's OWN account of a
+    /// download (`media.downloadStatus`), so it is there precisely where
+    /// Radarr's queue is not -- no `[insight]` configured at all.
     fn seerr_alone_text(&self, locale: Locale, wish: &Wish) -> String {
         if wish.media_status == 5 {
             state_text(&self.catalogue, locale, &WishState::Available)
         } else if wish.request_status == 4 || wish.arr_id.is_none() {
             state_text(&self.catalogue, locale, &WishState::NotHandedOver)
+        } else if let Some(percent) = wish.download_percent {
+            state_text(&self.catalogue, locale, &WishState::Downloading { percent })
         } else if wish.media_status == 4 {
             state_text(&self.catalogue, locale, &WishState::PartlyAvailable)
         } else {

@@ -1,4 +1,4 @@
-use signal_seerr::arr::{ArrClient, HistoryEvent, Insight, ReleaseSearch};
+use signal_seerr::arr::{ArrClient, HistoryEvent, Insight, QueueState, ReleaseSearch};
 use signal_seerr::model::MediaKind;
 use signal_seerr::secret::Secret;
 use wiremock::matchers::{header, method, path, query_param};
@@ -17,6 +17,10 @@ const HISTORY_DOWNLOAD_FAILED: &str =
     include_str!("fixtures/radarr-history-movie-download-failed.json");
 const HISTORY_EMPTY: &str = include_str!("fixtures/radarr-history-movie-empty.json");
 const QUEUE_EMPTY: &str = include_str!("fixtures/radarr-queue-empty.json");
+/// Recorded on 2026-09-22 while a real download was in progress (see
+/// `tests/fixtures/README.md`) -- the first `trackedDownloadState` this
+/// project has ever actually seen.
+const QUEUE_DOWNLOADING: &str = include_str!("fixtures/radarr-queue-downloading.json");
 const RELEASES_ALL_REJECTED: &str =
     include_str!("fixtures/radarr-release-all-rejected-language.json");
 
@@ -130,6 +134,35 @@ async fn an_empty_queue_is_an_empty_list() {
 
     let queue = client(&server).queue(MediaKind::Movie).await.unwrap();
     assert!(queue.is_empty());
+}
+
+/// `percent` is computed here in the test, from the recording's own
+/// `size`/`sizeleft` -- not hard-coded, so the production code cannot simply
+/// copy a number this test happens to expect.
+#[tokio::test]
+async fn a_downloading_queue_entry_carries_its_percent_and_state() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v3/queue"))
+        .and(query_param("pageSize", "200"))
+        .and(query_param("includeMovie", "false"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(QUEUE_DOWNLOADING, "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let queue = client(&server).queue(MediaKind::Movie).await.unwrap();
+    assert_eq!(queue.len(), 1);
+
+    let raw: serde_json::Value = serde_json::from_str(QUEUE_DOWNLOADING).unwrap();
+    let record = &raw["records"][0];
+    let size = record["size"].as_f64().unwrap();
+    let sizeleft = record["sizeleft"].as_f64().unwrap();
+    let expected_percent = ((size - sizeleft) / size * 100.0) as u8;
+
+    assert_eq!(queue[0].percent, expected_percent);
+    assert_eq!(queue[0].state, QueueState::Downloading);
 }
 
 #[tokio::test]
