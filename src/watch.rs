@@ -17,8 +17,15 @@
 //!
 //! **This is the only module in the crate that is ever handed a
 //! `ReleaseSearch`.** An interactive search hits every indexer the operator
-//! has, so it is budgeted twice over: at most one per wish, ever, and at most
-//! `max_searches_per_day` across the whole household per UTC day.
+//! has, so it is budgeted twice over: at most one SUCCESSFUL search per
+//! wish, and at most `max_searches_per_day` across the whole household per
+//! UTC day.
+//!
+//! Successful, not "ever": the bar is `reason.is_none()`, and a search that
+//! failed writes no reason. So a failed attempt costs one of that day's
+//! places and is made again the next day -- which is what anybody would want
+//! from a search that never reached the indexers, and is NOT what an earlier
+//! version of this comment said.
 //!
 //! The clock arrives as an argument. Nothing in here reads the time itself --
 //! a module whose entire subject is deadlines has to be testable without

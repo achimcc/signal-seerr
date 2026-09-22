@@ -62,7 +62,11 @@ fn is_shown(wish: &Wish, now: OffsetDateTime) -> bool {
 ///
 /// `classify` returns `Available` or `NotHandedOver` before it looks at any
 /// evidence, so asking about those wishes would cost a round trip and change
-/// nothing.
+/// nothing. A wish with no `arr_id` is the third case, for a different
+/// reason: it is not that the answer is already settled, but that there is
+/// nothing to ask ABOUT -- `movie()` and the queue are both keyed by that
+/// id. Such a wish ends up `Waiting`, which is what `seerr_alone_text`
+/// answers.
 fn needs_evidence(wish: &Wish) -> bool {
     wish.media_status != 5 && wish.request_status != 4 && wish.arr_id.is_some()
 }
@@ -814,10 +818,16 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
     /// more than "half of it is here". It is Seerr's OWN account of a
     /// download (`media.downloadStatus`), so it is there precisely where
     /// Radarr's queue is not -- no `[insight]` configured at all.
+    ///
+    /// The rows are `classify`'s own, and the second one is `classify`'s rule
+    /// too: only request status 4 means "not handed over". A wish with no
+    /// `externalServiceId` yet is a wish Seerr is still handing over, and
+    /// calling that a failure is a message somebody gets seconds after
+    /// asking for the film.
     fn seerr_alone_text(&self, locale: Locale, wish: &Wish) -> String {
         if wish.media_status == 5 {
             state_text(&self.catalogue, locale, &WishState::Available)
-        } else if wish.request_status == 4 || wish.arr_id.is_none() {
+        } else if wish.request_status == 4 {
             state_text(&self.catalogue, locale, &WishState::NotHandedOver)
         } else if let Some(percent) = wish.download_percent {
             state_text(&self.catalogue, locale, &WishState::Downloading { percent })

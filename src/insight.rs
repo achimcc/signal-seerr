@@ -32,7 +32,15 @@ pub fn classify(wish: &Wish, ev: &Evidence, now: time::OffsetDateTime) -> WishSt
     if wish.media_status == 5 {
         return WishState::Available;
     }
-    if wish.request_status == 4 || wish.arr_id.is_none() {
+    // ONLY request status 4 (FAILED). A MISSING `arr_id` IS NOT A FAILURE:
+    // Seerr fills `media.externalServiceId` when it hands the wish over,
+    // which is a moment or two after the request is placed -- and that is
+    // exactly when somebody types `/status` about the thing they just asked
+    // for. Reading the empty field as "I couldn't put it on the list" told
+    // them their wish had failed while it was on its way. Without an
+    // `arr_id` the caller gathers no film evidence either, so such a wish
+    // falls through to `Waiting`: on the list, nothing measured yet.
+    if wish.request_status == 4 {
         return WishState::NotHandedOver;
     }
     if let Some(item) = ev.queue_item {
@@ -216,9 +224,32 @@ mod tests {
     }
 
     #[test]
-    fn missing_arr_id_is_not_handed_over() {
+    fn a_missing_arr_id_while_the_wish_is_being_handed_over_is_waiting() {
+        // Seerr fills `externalServiceId` on the hand-over, a moment or two
+        // after the request is placed -- and that is precisely when somebody
+        // asks `/status` about what they just wished for. Answering "I
+        // couldn't put it on the list" there tells them their wish failed
+        // while it is on its way. Status 1 is pending, status 2 approved;
+        // both are open, not failed.
+        for status in [1, 2] {
+            let mut w = wish();
+            w.arr_id = None;
+            w.request_status = status;
+            assert_eq!(
+                classify(&w, &no_evidence(), time::OffsetDateTime::UNIX_EPOCH),
+                WishState::Waiting,
+                "request_status {status}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_arr_id_does_not_make_a_failed_wish_anything_else() {
+        // The other half of the same rule: status 4 keeps its own answer
+        // whether or not an id was ever written.
         let mut w = wish();
         w.arr_id = None;
+        w.request_status = 4;
         assert_eq!(
             classify(&w, &no_evidence(), time::OffsetDateTime::UNIX_EPOCH),
             WishState::NotHandedOver

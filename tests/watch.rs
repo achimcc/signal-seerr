@@ -1,6 +1,7 @@
-//! The watcher's round: once per wish and class, at most one interactive
-//! indexer search per wish, and the notices file written before the message
-//! goes out.
+//! The watcher's round: once per wish and class, at most one SUCCESSFUL
+//! interactive indexer search per wish (a failed one costs a place in the
+//! day's budget and is retried the next day -- test 14), and the notices
+//! file written before the message goes out.
 //!
 //! Every test drives a fixed clock (`NOW`) rather than the real one -- the
 //! whole module is about deadlines, and a test that had to wait 25 hours

@@ -662,6 +662,17 @@ async fn status_lists_what_is_still_on_its_way() {
     let out = d.handle(&aci, "/status").await;
     assert!(out[0].contains("1849"), "got: {}", out[0]);
     assert!(out[0].contains("Blade Runner 2049"), "got: {}", out[0]);
+    // The wish above is the ordinary fresh one: request_status 1 (pending)
+    // and no `externalServiceId` yet, because Seerr writes that on the
+    // hand-over a moment later. It is WAITING, not failed -- this used to
+    // answer "konnte ich nicht eintragen", which reads as "your wish is
+    // gone" to somebody who asked for the film seconds ago.
+    assert!(out[0].contains("wartet"), "got: {}", out[0]);
+    assert!(
+        !out[0].contains("nicht eintragen"),
+        "a wish on its way must not read as a failure: {}",
+        out[0]
+    );
 }
 
 #[tokio::test]

@@ -280,11 +280,14 @@ Off by default, and that is not timidity. Switched on, it lets the bot run
 **one interactive indexer search per stalled request** — Radarr's
 `/api/v3/release`, which asks every indexer the operator has configured, the
 same thing a human clicking "Interactive Search" triggers. It is budgeted
-twice over: at most one per request, ever, and at most
+twice over: at most one **successful** search per request, and at most
 `max_reason_searches_per_day` across the whole household per UTC day. It is
 **never** reachable from a chat command; `/status` cannot trigger one, no
 matter who types it. A search that reached the indexers and then failed is
-counted all the same — a budget that only counts successes is no budget.
+counted against the day's budget all the same — a budget that only counts
+successes is no budget — but it leaves no reason behind, so that one request
+is tried again the next day. "One per request, ever" would mean a single
+unreachable indexer settled the question for good.
 
 What it buys is the difference between *still looking, nothing suitable so
 far* and *so far only available in Portuguese* (or *too big*, *too small*,
