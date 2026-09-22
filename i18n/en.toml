@@ -41,7 +41,7 @@ empty = "There's nothing of yours on the way right now."
 line = "{id}: {title} — {state}"
 untitled = "(untitled)"
 waiting = "waiting"
-available = "here"
+available = "available"
 not_handed_over = "I couldn't put it on the list"
 partly_available = "part of it is here, the rest is still coming"
 import_stuck = "downloaded, but stuck on the last step"
@@ -58,7 +58,11 @@ wrong_quality = "so far only in versions we don't take (picture quality)"
 otherwise = "so far only in versions we don't take"
 
 [notice]
-unsuitable = "\"{title}\" {state}. I'm still looking and will let you know when it's here."
+# `{state}` is a FRAGMENT, built for `status.line` ("{id}: {title} — {state}")
+# and therefore without a subject of its own. It must be introduced, not
+# glued behind the title: "Der Wunsch" still looking, nothing suitable so
+# far" is what that gluing produced, for the commonest case of all.
+unsuitable = "About \"{title}\": {state}. I keep looking and will tell you when it is here."
 unsuitable_hint = "If a different version would do: /withdraw {id}, then ask for it again and pick another version."
 download_failed = "One attempt at \"{title}\" failed. I'm still looking."
 import_stuck = "\"{title}\" is downloaded but stuck on the last step. Somebody needs to look at that."

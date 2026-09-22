@@ -220,7 +220,7 @@ The optional `[insight]` section gives the bot read-only access to Radarr and
 Sonarr, and with it two things:
 
 **`/status` says what is actually the case.** Ten states, each backed by
-something measured rather than assumed — *here*, *part of it is here, the
+something measured rather than assumed — *available*, *part of it is here, the
 rest is still coming*, *downloading, 43 %*, *downloaded, but stuck on the
 last step*, *not out for home viewing yet (expected from …)*, *one attempt
 failed, I'm still looking*, *still looking, nothing suitable so far*, *so far

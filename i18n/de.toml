@@ -58,7 +58,11 @@ wrong_quality = "gibt es bisher nur in Fassungen, die wir nicht nehmen (Bildqual
 otherwise = "gibt es bisher nur in Fassungen, die wir nicht nehmen"
 
 [notice]
-unsuitable = "„{title}\" {state}. Ich suche weiter und melde mich, wenn er da ist."
+# `{state}` is a FRAGMENT, built for `status.line` ("{id}: {title} — {state}")
+# and therefore without a subject of its own. It must be introduced, not
+# glued behind the title: "„Der Wunsch\" ich suche noch" is what that gluing
+# produced, in both languages, for the commonest case of all.
+unsuitable = "Zu „{title}\": {state}. Ich suche weiter und melde mich, wenn er da ist."
 unsuitable_hint = "Wenn dir eine andere Fassung recht ist: /weg {id}, dann noch einmal wünschen und eine andere Fassung wählen."
 download_failed = "Bei „{title}\" ist ein Versuch gescheitert. Ich suche weiter."
 import_stuck = "„{title}\" ist geladen, klemmt aber beim letzten Schritt. Das muss sich jemand ansehen."

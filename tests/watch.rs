@@ -216,7 +216,7 @@ fn recorded_releases() -> Vec<Release> {
     .expect("the recording parses")
 }
 
-fn directory(with_entry: bool) -> Arc<RwLock<State>> {
+fn directory(with_entry: bool, locale: Locale) -> Arc<RwLock<State>> {
     let mut state = State::default();
     if with_entry {
         state.upsert(Entry {
@@ -224,7 +224,7 @@ fn directory(with_entry: bool) -> Arc<RwLock<State>> {
             signal_username: "robert.1".into(),
             aci: Aci("aaaa".into()),
             greeted: true,
-            locale: Locale::De,
+            locale,
             groups: vec!["Medien".into()],
         });
     }
@@ -250,6 +250,9 @@ struct Setup {
     per_day: u32,
     stall_after: Duration,
     with_entry: bool,
+    /// The language the one person in the directory reads. Only the two
+    /// tests that check a message word for word ever change it.
+    locale: Locale,
 }
 
 impl Default for Setup {
@@ -261,6 +264,7 @@ impl Default for Setup {
             per_day: 5,
             stall_after: Duration::hours(24),
             with_entry: true,
+            locale: Locale::De,
         }
     }
 }
@@ -279,7 +283,7 @@ fn harness(setup: Setup) -> Harness {
             .search_on
             .then(|| arr.clone() as Arc<dyn ReleaseSearch>),
         messenger: messenger.clone(),
-        directory: directory(setup.with_entry),
+        directory: directory(setup.with_entry, setup.locale),
         notices: notices.clone(),
         catalogue: Arc::new(Catalogue::load()),
         settings: WatchSettings {
@@ -971,4 +975,88 @@ async fn a_wish_whose_first_lookup_failed_does_not_restart_its_clock_either() {
         report.notices_sent, 1,
         "one failed lookup must not cost the person a further day"
     );
+}
+
+// -- the wording of the unasked message ------------------------------------
+//
+// THE WORDING ITSELF IS THE SUBJECT HERE, so these two compare against the
+// literal sentence rather than against the catalogue -- the catalogue would
+// only assert that the code agrees with itself. `{state}` is a FRAGMENT
+// built for the `/status` line, and putting it straight behind the title
+// produced "\u{201e}Der Wunsch\" ich suche noch, bisher war nichts Passendes
+// dabei." -- in both languages, and for the commonest case of the first
+// rollout stage (`reason_search = false`, so `Searching`).
+
+/// 17. The general sentence, word for word, in both languages.
+#[tokio::test]
+async fn the_searching_notice_reads_as_a_sentence_in_both_languages() {
+    for (locale, expected) in [
+        (
+            Locale::De,
+            "Zu \u{201e}Der Wunsch\": ich suche noch, bisher war nichts Passendes dabei. \
+             Ich suche weiter und melde mich, wenn er da ist.",
+        ),
+        (
+            Locale::En,
+            "About \"Der Wunsch\": still looking, nothing suitable so far. \
+             I keep looking and will tell you when it is here.",
+        ),
+    ] {
+        let h = harness(Setup {
+            seerr: FakeSeerr {
+                title: Some(TITLE.into()),
+                ..Default::default()
+            },
+            arr: FakeArr {
+                movies: Mutex::new(vec![(401, available())]),
+                ..Default::default()
+            },
+            search_on: false,
+            locale,
+            ..Default::default()
+        });
+        h.set_wishes(vec![movie_wish(1)]);
+
+        assert_eq!(h.watcher.round(NOW).await.notices_sent, 1);
+        assert_eq!(h.sent()[0].1, expected, "{locale:?}");
+    }
+}
+
+/// 18. And the one reason that carries no "pick another version" hint, so
+///     the whole message is that single sentence -- again word for word.
+#[tokio::test]
+async fn the_nothing_exists_notice_reads_as_a_sentence_in_both_languages() {
+    for (locale, expected) in [
+        (
+            Locale::De,
+            "Zu \u{201e}Der Wunsch\": bisher nirgends aufzutreiben. \
+             Ich suche weiter und melde mich, wenn er da ist.",
+        ),
+        (
+            Locale::En,
+            "About \"Der Wunsch\": nowhere to be found so far. \
+             I keep looking and will tell you when it is here.",
+        ),
+    ] {
+        let h = harness(Setup {
+            seerr: FakeSeerr {
+                title: Some(TITLE.into()),
+                ..Default::default()
+            },
+            arr: FakeArr {
+                movies: Mutex::new(vec![(401, available())]),
+                // An empty search result: `reason_from` answers
+                // `NothingExists`.
+                releases: Vec::new(),
+                ..Default::default()
+            },
+            locale,
+            ..Default::default()
+        });
+        h.set_wishes(vec![movie_wish(1)]);
+
+        let report = h.watcher.round(NOW).await;
+        assert_eq!((report.searches, report.notices_sent), (1, 1));
+        assert_eq!(h.sent()[0].1, expected, "{locale:?}");
+    }
 }
