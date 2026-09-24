@@ -71,10 +71,12 @@ unsuitable = "Zu „{title}\": {state}. Ich suche weiter und melde mich, wenn er
 unsuitable_hint = "Wenn dir eine andere Fassung recht ist: /weg {id}, dann noch einmal wünschen und eine andere Fassung wählen."
 download_failed = "Bei „{title}\" ist ein Versuch gescheitert. Ich suche weiter."
 import_stuck = "„{title}\" ist geladen, klemmt aber beim letzten Schritt. Das muss sich jemand ansehen."
+not_handed_over = "„{title}\" konnte ich auch beim zweiten Versuch nicht eintragen. Das liegt an der Technik hier, nicht am Film — das muss sich jemand ansehen."
+unsuitable_season = "Zu „{title}\", Staffel {season}: {state}. Ich suche weiter und melde mich, wenn sie da ist."
 
 [available]
 ready = "„{title}\" ist da.\n{url}"
-failed = "„{title}\" konnte ich nicht eintragen. Das liegt an der Technik hier, nicht am Film — versuch es in ein paar Minuten noch einmal."
+failed = "„{title}\" konnte ich nicht eintragen. Das liegt an der Technik hier, nicht am Film — ich versuche es in ein paar Minuten von selbst noch einmal."
 
 # Radarr's own English language names, as they arrive in a release's
 # `languages` field. A name with no entry here is shown as Radarr sends it --

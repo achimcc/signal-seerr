@@ -113,11 +113,38 @@ fn watch_settings(insight: &InsightConfig) -> Result<WatchSettings> {
                 insight.stall_after_hours
             )
         })?;
+    // Both optional by the same rule: `0` means off. Bounded like the hours
+    // above, for the same reason -- `time::Duration::minutes` panics on an
+    // overflow, and a typo deserves a named error.
+    let minutes = i64::try_from(insight.retry_failed_after_minutes)
+        .ok()
+        .filter(|m| *m <= MAX_STALL_AFTER_HOURS * 60)
+        .with_context(|| {
+            format!(
+                "retry_failed_after_minutes = {} is out of range: it must be at most \
+                 {} (a year)",
+                insight.retry_failed_after_minutes,
+                MAX_STALL_AFTER_HOURS * 60
+            )
+        })?;
+    let days = i64::try_from(insight.refresh_reason_after_days)
+        .ok()
+        .filter(|d| *d <= MAX_STALL_AFTER_HOURS / 24)
+        .with_context(|| {
+            format!(
+                "refresh_reason_after_days = {} is out of range: it must be at most \
+                 {} (a year)",
+                insight.refresh_reason_after_days,
+                MAX_STALL_AFTER_HOURS / 24
+            )
+        })?;
     Ok(WatchSettings {
         stall_after: time::Duration::hours(hours),
         max_searches_per_day: insight.max_reason_searches_per_day,
         notices_file: insight.notices_file.clone(),
         profile_languages: insight.profile_languages.clone(),
+        retry_failed_after: (minutes > 0).then(|| time::Duration::minutes(minutes)),
+        refresh_reason_after: (days > 0).then(|| time::Duration::days(days)),
     })
 }
 
@@ -456,6 +483,8 @@ mod watch_settings_tests {
                 "Dual Language, then German (1080p)".to_string(),
                 vec!["German".to_string(), "English".to_string()],
             )]),
+            retry_failed_after_minutes: 10,
+            refresh_reason_after_days: 7,
         }
     }
 

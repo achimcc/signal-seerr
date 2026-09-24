@@ -110,6 +110,8 @@ fn watcher(seerr: Arc<FakeSeerr>, notices_file: std::path::PathBuf) -> Watcher {
             max_searches_per_day: 5,
             notices_file,
             profile_languages: BTreeMap::new(),
+            retry_failed_after: None,
+            refresh_reason_after: None,
         },
     }
 }

@@ -50,6 +50,12 @@ pub struct Note {
     pub told: BTreeMap<String, String>,
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub last_notice: Option<OffsetDateTime>,
+    /// When the bot handed a FAILED wish to Radarr/Sonarr a second time
+    /// (`Requests::retry`). Written BEFORE the call: whatever Seerr answers,
+    /// there is never a third attempt. `#[serde(default)]`, no schema bump --
+    /// an older file simply says "never retried".
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub retried_at: Option<OffsetDateTime>,
 }
 
 impl Note {
@@ -63,6 +69,7 @@ impl Note {
             searched_at: None,
             told: BTreeMap::new(),
             last_notice: None,
+            retried_at: None,
         }
     }
 }

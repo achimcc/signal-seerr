@@ -149,10 +149,27 @@ pub struct InsightConfig {
     /// profiles ever get the "only in <language>" reason.
     #[serde(default)]
     pub profile_languages: BTreeMap<String, Vec<String>>,
+    /// How long a FAILED hand-over sits before the watcher hands it over
+    /// once more, itself. `0` switches the retry off.
+    #[serde(default = "ten")]
+    pub retry_failed_after_minutes: u64,
+    /// After how many days a recorded reason is searched for again -- once,
+    /// budgeted like a first search, and told only if the class changed.
+    /// `0` switches the refresh off.
+    #[serde(default = "seven")]
+    pub refresh_reason_after_days: u64,
 }
 
 fn ten_minutes() -> u64 {
     600
+}
+
+fn ten() -> u64 {
+    10
+}
+
+fn seven() -> u64 {
+    7
 }
 
 fn one_day() -> u64 {
@@ -312,6 +329,8 @@ mod tests {
         assert!(!insight.reason_search, "reason_search must default to off");
         assert_eq!(insight.max_reason_searches_per_day, 5);
         assert!(insight.profile_languages.is_empty());
+        assert_eq!(insight.retry_failed_after_minutes, 10);
+        assert_eq!(insight.refresh_reason_after_days, 7);
     }
 
     #[test]
@@ -370,6 +389,8 @@ mod tests {
                 max_reason_searches_per_day: 5,
                 notices_file: "/tmp/notices.json".into(),
                 profile_languages: Default::default(),
+                retry_failed_after_minutes: 10,
+                refresh_reason_after_days: 7,
             }),
             ..Config::for_test()
         };
@@ -562,6 +583,8 @@ mod tests {
                 max_reason_searches_per_day: 5,
                 notices_file: "/tmp/notices.json".into(),
                 profile_languages: Default::default(),
+                retry_failed_after_minutes: 10,
+                refresh_reason_after_days: 7,
             }),
             ..Config::for_test()
         };
@@ -587,6 +610,8 @@ mod tests {
                 max_reason_searches_per_day: 5,
                 notices_file: "/tmp/notices.json".into(),
                 profile_languages: Default::default(),
+                retry_failed_after_minutes: 10,
+                refresh_reason_after_days: 7,
             }),
             ..Config::for_test()
         };

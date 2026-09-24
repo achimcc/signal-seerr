@@ -8,7 +8,8 @@
 //! would never be run.
 
 use signal_seerr::arr::{
-    ArrMovie, ArrSeries, HistoryEvent, Insight, QueueItem, QueueState, Release, ReleaseSearch,
+    ArrEpisode, ArrMovie, ArrSeries, HistoryEvent, Insight, QueueItem, QueueState, Release,
+    ReleaseSearch,
 };
 use signal_seerr::dialog::state_text;
 use signal_seerr::i18n::{Catalogue, Locale};
@@ -19,7 +20,7 @@ use signal_seerr::notices::Notices;
 use signal_seerr::seerr::Requests;
 use signal_seerr::signal::Messenger;
 use signal_seerr::state::{Entry, State};
-use signal_seerr::watch::{RoundReport, WatchSettings, Watcher};
+use signal_seerr::watch::{same_class, RoundReport, WatchSettings, Watcher};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -119,7 +120,9 @@ struct FakeArr {
     /// `last_event` fails -- Radarr answered about the film and then not
     /// about its history, which is one timeout away from ordinary.
     last_event_fail: bool,
-    releases: Vec<Release>,
+    /// Behind a lock so a refresh test can let the indexers' answer change
+    /// between two rounds.
+    releases: Mutex<Vec<Release>>,
     releases_fail: bool,
     movie_calls: AtomicUsize,
     last_event_calls: AtomicUsize,
@@ -183,14 +186,14 @@ impl ReleaseSearch for FakeArr {
         if self.releases_fail {
             anyhow::bail!("radarr's indexers are unreachable");
         }
-        Ok(self.releases.clone())
+        Ok(self.releases.lock().unwrap().clone())
     }
     async fn season_releases(&self, _series_id: i64, season: u16) -> anyhow::Result<Vec<Release>> {
         self.season_release_calls.lock().unwrap().push(season);
         if self.releases_fail {
             anyhow::bail!("sonarr's indexers are unreachable");
         }
-        Ok(self.releases.clone())
+        Ok(self.releases.lock().unwrap().clone())
     }
 }
 
@@ -294,6 +297,10 @@ struct Setup {
     /// The language the one person in the directory reads. Only the two
     /// tests that check a message word for word ever change it.
     locale: Locale,
+    /// `None`: the retry of a failed hand-over is off.
+    retry_after: Option<Duration>,
+    /// `None`: the weekly refresh of a reason is off.
+    refresh_after: Option<Duration>,
 }
 
 impl Default for Setup {
@@ -306,6 +313,8 @@ impl Default for Setup {
             stall_after: Duration::hours(24),
             with_entry: true,
             locale: Locale::De,
+            retry_after: Some(Duration::minutes(10)),
+            refresh_after: Some(Duration::days(7)),
         }
     }
 }
@@ -332,6 +341,8 @@ fn harness(setup: Setup) -> Harness {
             max_searches_per_day: setup.per_day,
             notices_file: path.clone(),
             profile_languages: BTreeMap::from([(PROFILE.to_string(), vec!["German".to_string()])]),
+            retry_failed_after: setup.retry_after,
+            refresh_reason_after: setup.refresh_after,
         },
     };
     Harness {
@@ -421,7 +432,8 @@ async fn a_wish_an_hour_short_of_the_deadline_is_left_alone() {
         RoundReport {
             wishes: 1,
             notices_sent: 0,
-            searches: 0
+            searches: 0,
+            ..RoundReport::default()
         }
     );
     assert!(h.sent().is_empty());
@@ -441,7 +453,7 @@ async fn a_stalled_wish_is_told_once_and_no_rejection_text_leaks() {
         },
         arr: FakeArr {
             movies: Mutex::new(vec![(401, available())]),
-            releases: recorded_releases(),
+            releases: Mutex::new(recorded_releases()),
             ..Default::default()
         },
         ..Default::default()
@@ -455,7 +467,8 @@ async fn a_stalled_wish_is_told_once_and_no_rejection_text_leaks() {
         RoundReport {
             wishes: 1,
             notices_sent: 1,
-            searches: 1
+            searches: 1,
+            ..RoundReport::default()
         }
     );
     let sent = h.sent();
@@ -495,7 +508,7 @@ async fn a_told_wish_stays_quiet_across_the_next_round_and_a_restart() {
         },
         arr: FakeArr {
             movies: Mutex::new(vec![(401, available())]),
-            releases: recorded_releases(),
+            releases: Mutex::new(recorded_releases()),
             ..Default::default()
         },
         ..Default::default()
@@ -510,7 +523,8 @@ async fn a_told_wish_stays_quiet_across_the_next_round_and_a_restart() {
         RoundReport {
             wishes: 1,
             notices_sent: 0,
-            searches: 0
+            searches: 0,
+            ..RoundReport::default()
         }
     );
 
@@ -522,7 +536,8 @@ async fn a_told_wish_stays_quiet_across_the_next_round_and_a_restart() {
         RoundReport {
             wishes: 1,
             notices_sent: 0,
-            searches: 0
+            searches: 0,
+            ..RoundReport::default()
         },
         "the record must have survived the restart"
     );
@@ -540,7 +555,7 @@ async fn a_failed_send_is_retried_next_round_without_a_second_search() {
         },
         arr: FakeArr {
             movies: Mutex::new(vec![(401, available())]),
-            releases: recorded_releases(),
+            releases: Mutex::new(recorded_releases()),
             ..Default::default()
         },
         ..Default::default()
@@ -563,7 +578,8 @@ async fn a_failed_send_is_retried_next_round_without_a_second_search() {
         RoundReport {
             wishes: 1,
             notices_sent: 1,
-            searches: 0
+            searches: 0,
+            ..RoundReport::default()
         }
     );
     assert_eq!(h.arr.release_calls.load(Ordering::SeqCst), 1);
@@ -672,7 +688,7 @@ async fn one_search_per_round_five_a_day_and_a_fresh_budget_tomorrow() {
         },
         arr: FakeArr {
             movies: Mutex::new((1..=6).map(|id| (400 + id, available())).collect()),
-            releases: recorded_releases(),
+            releases: Mutex::new(recorded_releases()),
             ..Default::default()
         },
         per_day: 5,
@@ -725,7 +741,8 @@ async fn without_the_search_the_general_sentence_goes_out_right_away() {
         RoundReport {
             wishes: 1,
             notices_sent: 1,
-            searches: 0
+            searches: 0,
+            ..RoundReport::default()
         }
     );
     assert_eq!(h.sent()[0].1, expected_notice(&WishState::Searching, 1));
@@ -743,7 +760,7 @@ async fn a_requester_without_a_signal_name_is_never_told_and_nothing_is_recorded
         },
         arr: FakeArr {
             movies: Mutex::new(vec![(401, available())]),
-            releases: recorded_releases(),
+            releases: Mutex::new(recorded_releases()),
             ..Default::default()
         },
         with_entry: false,
@@ -768,7 +785,7 @@ async fn a_wish_gone_from_seerr_loses_its_note() {
         },
         arr: FakeArr {
             movies: Mutex::new(vec![(401, available())]),
-            releases: recorded_releases(),
+            releases: Mutex::new(recorded_releases()),
             ..Default::default()
         },
         ..Default::default()
@@ -791,7 +808,11 @@ async fn a_wish_gone_from_seerr_loses_its_note() {
 ///     nothing at all rather than a sentence the bot cannot back up. It
 ///     classifies as `Waiting`, which is never announced unasked.
 #[tokio::test]
-async fn a_stalled_series_costs_no_lookup_and_is_told_nothing() {
+async fn a_series_sonarr_cannot_answer_about_is_told_nothing() {
+    // Before 0.5.0 a series cost no lookup at all and was told nothing --
+    // there was no series evidence to gather. Now Sonarr IS asked; when it
+    // cannot answer (here: knows no such series), the rule from before
+    // holds: nothing measured, nothing claimed, no search.
     let h = harness(Setup {
         seerr: FakeSeerr {
             title: Some(TITLE.into()),
@@ -806,7 +827,9 @@ async fn a_stalled_series_costs_no_lookup_and_is_told_nothing() {
     let report = h.watcher.round(NOW).await;
 
     assert_eq!(h.arr.movie_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(h.arr.series_calls.load(Ordering::SeqCst), 1);
     assert_eq!(h.arr.release_calls.load(Ordering::SeqCst), 0);
+    assert!(h.arr.season_release_calls.lock().unwrap().is_empty());
     assert_eq!(report.searches, 0);
     assert_eq!(
         report.notices_sent, 0,
@@ -832,7 +855,7 @@ async fn a_seerr_outage_is_not_a_withdrawal() {
         },
         arr: FakeArr {
             movies: Mutex::new(vec![(401, available())]),
-            releases: recorded_releases(),
+            releases: Mutex::new(recorded_releases()),
             ..Default::default()
         },
         ..Default::default()
@@ -862,7 +885,7 @@ async fn a_wish_waiting_for_its_search_is_not_told_anything_yet() {
         },
         arr: FakeArr {
             movies: Mutex::new(vec![(401, available()), (402, available())]),
-            releases: recorded_releases(),
+            releases: Mutex::new(recorded_releases()),
             ..Default::default()
         },
         per_day: 1,
@@ -1124,7 +1147,7 @@ async fn the_nothing_exists_notice_reads_as_a_sentence_in_both_languages() {
                 movies: Mutex::new(vec![(401, available())]),
                 // An empty search result: `reason_from` answers
                 // `NothingExists`.
-                releases: Vec::new(),
+                releases: Mutex::new(Vec::new()),
                 ..Default::default()
             },
             locale,
@@ -1136,4 +1159,474 @@ async fn the_nothing_exists_notice_reads_as_a_sentence_in_both_languages() {
         assert_eq!((report.searches, report.notices_sent), (1, 1));
         assert_eq!(h.sent()[0].1, expected, "{locale:?}");
     }
+}
+
+// -- series with a reason (0.5.0) -------------------------------------------
+
+fn tv_wish(id: i64, seasons: Vec<u16>) -> Wish {
+    let mut w = movie_wish(id);
+    w.kind = MediaKind::Tv;
+    w.seasons = seasons;
+    w
+}
+
+fn ep(season: u16, number: u16, air: OffsetDateTime, has_file: bool) -> ArrEpisode {
+    ArrEpisode {
+        season,
+        number,
+        air_date: Some(air),
+        has_file,
+        monitored: true,
+    }
+}
+
+/// Season 1 complete, season 2: one episode on file, one aired `missing_days`
+/// ago and missing, one still ahead.
+fn series_missing_one(missing_days: i64) -> ArrSeries {
+    ArrSeries {
+        monitored: true,
+        monitored_seasons: vec![1, 2],
+        episodes: vec![
+            ep(1, 1, NOW - Duration::days(400), true),
+            ep(2, 1, NOW - Duration::days(missing_days + 7), true),
+            ep(2, 2, NOW - Duration::days(missing_days), false),
+            ep(2, 3, NOW + Duration::days(7), false),
+        ],
+    }
+}
+
+fn expected_season_notice(state: &WishState, id: i64, season: u16) -> String {
+    let catalogue = Catalogue::load();
+    let mut text = catalogue.text(
+        Locale::De,
+        "notice.unsuitable_season",
+        &[
+            ("title", TITLE),
+            ("season", &season.to_string()),
+            ("state", &state_text(&catalogue, Locale::De, state)),
+        ],
+    );
+    text.push_str("\n\n");
+    text.push_str(&catalogue.text(
+        Locale::De,
+        "notice.unsuitable_hint",
+        &[("id", &id.to_string())],
+    ));
+    text
+}
+
+#[tokio::test]
+async fn a_stalled_series_with_a_missing_episode_is_told_once_with_its_season() {
+    let h = harness(Setup {
+        seerr: FakeSeerr {
+            title: Some(TITLE.into()),
+            ..Default::default()
+        },
+        arr: FakeArr {
+            series: Mutex::new(vec![(401, series_missing_one(20))]),
+            releases: Mutex::new(recorded_releases()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    h.set_wishes(vec![tv_wish(1, vec![1, 2])]);
+
+    let report = h.watcher.round(NOW).await;
+
+    assert_eq!((report.searches, report.notices_sent), (1, 1));
+    // The SEASON search, for the season of the missing episode -- never
+    // Radarr's per-movie one.
+    assert_eq!(*h.arr.season_release_calls.lock().unwrap(), vec![2]);
+    assert_eq!(h.arr.release_calls.load(Ordering::SeqCst), 0);
+    let sent = h.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0].1,
+        expected_season_notice(
+            &WishState::Unsuitable(Reason::OnlyInLanguages(vec![
+                "Portuguese".into(),
+                "Portuguese (Brazil)".into(),
+            ])),
+            1,
+            2
+        )
+    );
+    assert!(sent[0].1.contains("Staffel 2"), "{}", sent[0].1);
+
+    // Once. The next round -- and the one after a restart -- says nothing.
+    let again = h.watcher.round(NOW + Duration::hours(1)).await;
+    assert_eq!((again.searches, again.notices_sent), (0, 0));
+    let restarted = h.after_restart().round(NOW + Duration::hours(2)).await;
+    assert_eq!((restarted.searches, restarted.notices_sent), (0, 0));
+    assert_eq!(h.sent().len(), 1);
+}
+
+#[tokio::test]
+async fn a_series_clock_runs_from_the_oldest_missing_air_date() {
+    // The wish is 25 hours old, but the missing episode aired two hours
+    // ago: nobody could have got it yet. Nothing until 24 hours after THAT.
+    let two_hours = ArrSeries {
+        monitored: true,
+        monitored_seasons: vec![1],
+        episodes: vec![
+            ep(1, 1, NOW - Duration::days(30), true),
+            ep(1, 2, NOW - Duration::hours(2), false),
+        ],
+    };
+    let h = harness(Setup {
+        seerr: FakeSeerr {
+            title: Some(TITLE.into()),
+            ..Default::default()
+        },
+        arr: FakeArr {
+            series: Mutex::new(vec![(401, two_hours)]),
+            releases: Mutex::new(recorded_releases()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    h.set_wishes(vec![tv_wish(1, vec![1])]);
+
+    let early = h.watcher.round(NOW).await;
+    assert_eq!((early.searches, early.notices_sent), (0, 0));
+    assert!(h.arr.season_release_calls.lock().unwrap().is_empty());
+
+    let later = h.watcher.round(NOW + Duration::hours(23)).await;
+    assert_eq!((later.searches, later.notices_sent), (1, 1));
+}
+
+#[tokio::test]
+async fn a_partly_available_series_is_never_announced() {
+    // Every aired episode is on file; the next one is a week away. Not a
+    // problem, so not a notice -- and not a search either.
+    let complete_so_far = ArrSeries {
+        monitored: true,
+        monitored_seasons: vec![1],
+        episodes: vec![
+            ep(1, 1, NOW - Duration::days(30), true),
+            ep(1, 2, NOW - Duration::days(23), true),
+            ep(1, 3, NOW + Duration::days(7), false),
+        ],
+    };
+    let h = harness(Setup {
+        seerr: FakeSeerr {
+            title: Some(TITLE.into()),
+            ..Default::default()
+        },
+        arr: FakeArr {
+            series: Mutex::new(vec![(401, complete_so_far)]),
+            releases: Mutex::new(recorded_releases()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let mut wish = tv_wish(1, vec![1]);
+    wish.media_status = 4;
+    h.set_wishes(vec![wish]);
+
+    // Days after the wish, but BEFORE the next episode airs -- once it has
+    // aired and is missing, it is a stalled series like any other.
+    let report = h.watcher.round(NOW + Duration::days(3)).await;
+    assert_eq!((report.searches, report.notices_sent), (0, 0));
+    assert!(h.sent().is_empty());
+}
+
+// -- the retry of a failed hand-over ----------------------------------------
+
+fn failed_wish(id: i64) -> Wish {
+    let mut w = movie_wish(id);
+    w.request_status = 4;
+    w.arr_id = None;
+    w
+}
+
+#[tokio::test]
+async fn a_failed_wish_is_retried_once_after_the_delay_and_recorded_before_the_call() {
+    let h = harness(Setup {
+        seerr: FakeSeerr {
+            title: Some(TITLE.into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    h.set_wishes(vec![failed_wish(1)]);
+
+    let report = h.watcher.round(NOW).await;
+    assert_eq!(report.retries, 1);
+    assert_eq!(*h.seerr.retry_calls.lock().unwrap(), vec![1]);
+    // No evidence was gathered and nothing was said: the retry IS the
+    // answer to a first failure.
+    assert_eq!(h.arr.movie_calls.load(Ordering::SeqCst), 0);
+    assert!(h.sent().is_empty());
+    let on_disk = Notices::load(&h.path).unwrap();
+    assert_eq!(on_disk.note(1).unwrap().retried_at, Some(NOW));
+
+    // Never again -- not this round, not after a restart.
+    let again = h.watcher.round(NOW + Duration::hours(1)).await;
+    assert_eq!(again.retries, 0);
+    let restarted = h.after_restart().round(NOW + Duration::hours(2)).await;
+    assert_eq!(restarted.retries, 0);
+    assert_eq!(h.seerr.retry_calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_wish_a_minute_short_of_the_retry_delay_is_left_alone() {
+    let h = harness(Setup::default());
+    let mut wish = failed_wish(1);
+    wish.created_at = NOW - Duration::minutes(9);
+    h.set_wishes(vec![wish]);
+
+    let report = h.watcher.round(NOW).await;
+    assert_eq!(report.retries, 0);
+    assert!(h.seerr.retry_calls.lock().unwrap().is_empty());
+    assert!(h
+        .notices
+        .read()
+        .unwrap()
+        .note(1)
+        .unwrap()
+        .retried_at
+        .is_none());
+}
+
+#[tokio::test]
+async fn a_failed_retry_still_counts_and_is_not_repeated() {
+    let h = harness(Setup::default());
+    h.seerr.retry_fail.store(true, Ordering::SeqCst);
+    h.set_wishes(vec![failed_wish(1)]);
+
+    let first = h.watcher.round(NOW).await;
+    assert_eq!(first.retries, 1);
+    assert!(h
+        .notices
+        .read()
+        .unwrap()
+        .note(1)
+        .unwrap()
+        .retried_at
+        .is_some());
+    assert!(h.sent().is_empty(), "no notice before the deadline");
+
+    let second = h.watcher.round(NOW + Duration::hours(1)).await;
+    assert_eq!(second.retries, 0);
+    assert_eq!(h.seerr.retry_calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_still_failed_wish_is_told_not_handed_over_once_after_the_deadline() {
+    let h = harness(Setup {
+        seerr: FakeSeerr {
+            title: Some(TITLE.into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    h.set_wishes(vec![failed_wish(1)]);
+
+    let retried = h.watcher.round(NOW).await;
+    assert_eq!((retried.retries, retried.notices_sent), (1, 0));
+
+    // Still status 4 a day later: the second attempt did not help either.
+    let told = h.watcher.round(NOW + Duration::hours(25)).await;
+    assert_eq!(told.notices_sent, 1);
+    let sent = h.sent();
+    let expected =
+        Catalogue::load().text(Locale::De, "notice.not_handed_over", &[("title", TITLE)]);
+    assert_eq!(sent[0].1, expected);
+    assert!(sent[0].1.contains(TITLE));
+
+    let again = h.watcher.round(NOW + Duration::hours(50)).await;
+    assert_eq!(again.notices_sent, 0);
+    assert_eq!(h.sent().len(), 1);
+    assert!(h
+        .notices
+        .read()
+        .unwrap()
+        .note(1)
+        .unwrap()
+        .told
+        .contains_key("not_handed_over"));
+}
+
+#[tokio::test]
+async fn retry_off_means_no_call_and_no_notice() {
+    let h = harness(Setup {
+        seerr: FakeSeerr {
+            title: Some(TITLE.into()),
+            ..Default::default()
+        },
+        retry_after: None,
+        ..Default::default()
+    });
+    h.set_wishes(vec![failed_wish(1)]);
+
+    let now = h.watcher.round(NOW).await;
+    let later = h.watcher.round(NOW + Duration::days(3)).await;
+    assert_eq!((now.retries, later.retries), (0, 0));
+    assert_eq!((now.notices_sent, later.notices_sent), (0, 0));
+    assert!(h.seerr.retry_calls.lock().unwrap().is_empty());
+    assert!(h.sent().is_empty());
+}
+
+// -- the refresh of a reason -------------------------------------------------
+
+fn too_large_german() -> Vec<Release> {
+    vec![Release {
+        rejected: true,
+        rejections: vec!["43.7 GB is larger than maximum allowed 12.8 GB (for Film A)".into()],
+        languages: vec!["German".into()],
+    }]
+}
+
+/// One round at `NOW` that records the recorded search's reason ("only in
+/// Portuguese") and tells about it.
+async fn first_reason(h: &Harness) {
+    h.set_wishes(vec![movie_wish(1)]);
+    let report = h.watcher.round(NOW).await;
+    assert_eq!(
+        (report.searches, report.notices_sent, report.refreshes),
+        (1, 1, 0)
+    );
+    assert_eq!(h.sent().len(), 1);
+}
+
+fn refresh_harness() -> Harness {
+    harness(Setup {
+        seerr: FakeSeerr {
+            title: Some(TITLE.into()),
+            ..Default::default()
+        },
+        arr: FakeArr {
+            movies: Mutex::new(vec![(401, available())]),
+            releases: Mutex::new(recorded_releases()),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+}
+
+#[tokio::test]
+async fn a_changed_class_is_searched_again_after_the_interval_and_told_again() {
+    let h = refresh_harness();
+    first_reason(&h).await;
+
+    // A week on, a German version exists -- and is too big.
+    *h.arr.releases.lock().unwrap() = too_large_german();
+    let report = h.watcher.round(NOW + Duration::days(8)).await;
+
+    assert_eq!(
+        (report.searches, report.refreshes, report.notices_sent),
+        (1, 1, 1)
+    );
+    assert_eq!(h.arr.release_calls.load(Ordering::SeqCst), 2);
+    let sent = h.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(
+        sent[1].1,
+        expected_notice(&WishState::Unsuitable(Reason::TooLarge), 1)
+    );
+    let notices = h.notices.read().unwrap();
+    let note = notices.note(1).unwrap();
+    assert_eq!(note.reason, Some(Reason::TooLarge));
+    assert_eq!(note.searched_at, Some(NOW + Duration::days(8)));
+    assert!(note.told.contains_key("unsuitable"));
+}
+
+#[tokio::test]
+async fn an_unchanged_class_says_nothing_and_only_moves_searched_at() {
+    let h = refresh_harness();
+    first_reason(&h).await;
+
+    let report = h.watcher.round(NOW + Duration::days(8)).await;
+
+    assert_eq!(
+        (report.searches, report.refreshes, report.notices_sent),
+        (1, 1, 0)
+    );
+    assert_eq!(h.sent().len(), 1, "the same reason is not news");
+    {
+        let notices = h.notices.read().unwrap();
+        let note = notices.note(1).unwrap();
+        assert_eq!(note.searched_at, Some(NOW + Duration::days(8)));
+        assert!(matches!(note.reason, Some(Reason::OnlyInLanguages(_))));
+    }
+
+    // ... and not again before another interval has passed.
+    let soon = h.watcher.round(NOW + Duration::days(9)).await;
+    assert_eq!((soon.searches, soon.refreshes), (0, 0));
+}
+
+#[tokio::test]
+async fn a_refresh_before_the_interval_does_nothing() {
+    let h = refresh_harness();
+    first_reason(&h).await;
+
+    let report = h.watcher.round(NOW + Duration::days(6)).await;
+    assert_eq!(
+        (report.searches, report.refreshes, report.notices_sent),
+        (0, 0, 0)
+    );
+}
+
+#[tokio::test]
+async fn refresh_off_means_no_second_search() {
+    let h = harness(Setup {
+        seerr: FakeSeerr {
+            title: Some(TITLE.into()),
+            ..Default::default()
+        },
+        arr: FakeArr {
+            movies: Mutex::new(vec![(401, available())]),
+            releases: Mutex::new(recorded_releases()),
+            ..Default::default()
+        },
+        refresh_after: None,
+        ..Default::default()
+    });
+    first_reason(&h).await;
+
+    let report = h.watcher.round(NOW + Duration::days(30)).await;
+    assert_eq!((report.searches, report.refreshes), (0, 0));
+    assert_eq!(h.arr.release_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_first_search_goes_before_a_refresh_in_the_same_round() {
+    let h = refresh_harness();
+    first_reason(&h).await;
+
+    // A week on, a SECOND wish has stalled and never heard anything. The
+    // round's single search is its -- the refresh of wish 1 waits.
+    let mut second = movie_wish(2);
+    second.created_at = NOW + Duration::days(6);
+    h.arr.movies.lock().unwrap().push((402, available()));
+    h.set_wishes(vec![movie_wish(1), second]);
+
+    let report = h.watcher.round(NOW + Duration::days(8)).await;
+    assert_eq!(
+        (report.searches, report.refreshes, report.notices_sent),
+        (1, 0, 1)
+    );
+    assert_eq!(h.sent().len(), 2);
+    assert!(h.sent()[1].1.contains(TITLE));
+    let searched_at_of_1 = h.notices.read().unwrap().note(1).unwrap().searched_at;
+    assert_eq!(searched_at_of_1, Some(NOW), "wish 1 was not refreshed yet");
+
+    // The next round has the search to spare.
+    let next = h
+        .watcher
+        .round(NOW + Duration::days(8) + Duration::hours(1))
+        .await;
+    assert_eq!((next.searches, next.refreshes), (1, 1));
+}
+
+#[test]
+fn a_different_order_of_the_same_languages_is_not_a_change() {
+    let a = Reason::OnlyInLanguages(vec!["Portuguese".into(), "Spanish".into()]);
+    let b = Reason::OnlyInLanguages(vec!["Spanish".into(), "Portuguese".into()]);
+    assert!(same_class(&a, &b));
+    let c = Reason::OnlyInLanguages(vec!["Spanish".into()]);
+    assert!(!same_class(&a, &c));
+    assert!(!same_class(&a, &Reason::TooLarge));
+    assert!(same_class(&Reason::TooLarge, &Reason::TooLarge));
 }
