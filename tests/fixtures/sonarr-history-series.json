@@ -1,0 +1,182 @@
+[
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "downloadFolderImported",
+    "seriesId": 1,
+    "episodeId": 6,
+    "data": {
+      "reason": null
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 6,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "downloadFolderImported",
+    "seriesId": 1,
+    "episodeId": 5,
+    "data": {
+      "reason": null
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 5,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "downloadFolderImported",
+    "seriesId": 1,
+    "episodeId": 4,
+    "data": {
+      "reason": null
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 4,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "downloadFolderImported",
+    "seriesId": 1,
+    "episodeId": 3,
+    "data": {
+      "reason": null
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 3,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "downloadFolderImported",
+    "seriesId": 1,
+    "episodeId": 2,
+    "data": {
+      "reason": null
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 2,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "downloadFolderImported",
+    "seriesId": 1,
+    "episodeId": 1,
+    "data": {
+      "reason": null
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:22Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 1,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:11Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 6,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:11Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 5,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:11Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 4,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:11Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 3,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:11Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 2,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:11Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 1,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:00Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 6,
+    "data": {
+      "reason": "Upgrade"
+    }
+  },
+  {
+    "date": "2026-09-07T14:44:00Z",
+    "eventType": "episodeFileDeleted",
+    "seriesId": 1,
+    "episodeId": 5,
+    "data": {
+      "reason": "Upgrade"
+    }
+  }
+]

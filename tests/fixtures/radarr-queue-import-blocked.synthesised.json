@@ -1,0 +1,18 @@
+{
+  "page": 1,
+  "pageSize": 200,
+  "sortKey": "timeleft",
+  "sortDirection": "descending",
+  "totalRecords": 1,
+  "records": [
+    {
+      "movieId": 109,
+      "size": 12239377530,
+      "sizeleft": 3610372997,
+      "status": "downloading",
+      "trackedDownloadStatus": "ok",
+      "trackedDownloadState": "importBlocked",
+      "statusMessages": []
+    }
+  ]
+}

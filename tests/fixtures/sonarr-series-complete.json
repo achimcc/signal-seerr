@@ -1,0 +1,28 @@
+{
+  "id": 1,
+  "monitored": true,
+  "status": "ended",
+  "firstAired": "2019-05-14T00:00:00Z",
+  "nextAiring": null,
+  "previousAiring": "2019-06-18T20:00:00Z",
+  "qualityProfileId": 7,
+  "seasons": [
+    {
+      "seasonNumber": 1,
+      "monitored": true,
+      "statistics": {
+        "episodeFileCount": 6,
+        "episodeCount": 6,
+        "totalEpisodeCount": 6,
+        "nextAiring": null,
+        "previousAiring": "2019-06-18T20:00:00Z"
+      }
+    }
+  ],
+  "statistics": {
+    "seasonCount": 1,
+    "episodeFileCount": 6,
+    "episodeCount": 6,
+    "totalEpisodeCount": 6
+  }
+}

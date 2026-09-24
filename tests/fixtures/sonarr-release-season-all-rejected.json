@@ -1,0 +1,2056 @@
+[
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-720p"
+      }
+    },
+    "size": 1048697346,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-2160p"
+      }
+    },
+    "size": 10123662785,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-2160p"
+      }
+    },
+    "size": 8815226426,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 3163393390,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-720p"
+      }
+    },
+    "size": 1048697346,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 3163393390,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 1676378302,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-2160p"
+      }
+    },
+    "size": 1770477831,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-2160p"
+      }
+    },
+    "size": 1768184767,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-2160p"
+      }
+    },
+    "size": 890954178,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-2160p"
+      }
+    },
+    "size": 886837394,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 1679808991,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 1679876855,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 1652971285,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 415191362,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 465088643,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 0
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 410011195,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 0
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 379554462,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 0
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 454952689,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 0
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 405888103,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 0
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 449766501,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 0
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 421940510,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 0
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 365117594,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 0
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 398901905,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 0
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 408783927,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 394476443,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 444183419,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "SDTV"
+      }
+    },
+    "size": 122452632,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 0
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Series X matches an alias for series with TVDB ID: 0"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 308987825,
+    "protocol": "usenet",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 0
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Unknown Series"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBRip-1080p"
+      }
+    },
+    "size": 1187255964,
+    "protocol": "torrent",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Unknown Series"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 2932784193,
+    "protocol": "torrent",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Unknown Series"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 6264511614,
+    "protocol": "torrent",
+    "customFormatScore": 0,
+    "fullSeason": true,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Unknown Series"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 17978818305,
+    "protocol": "torrent",
+    "customFormatScore": 0,
+    "fullSeason": true,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Unknown Series"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 2105712704,
+    "protocol": "torrent",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Unknown Series"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 2111379626,
+    "protocol": "torrent",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Unknown Series"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 1141099915,
+    "protocol": "torrent",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Unknown Series"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "HDTV-1080p"
+      }
+    },
+    "size": 1141863550,
+    "protocol": "torrent",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Unknown Series"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBRip-1080p"
+      }
+    },
+    "size": 1980187173,
+    "protocol": "torrent",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Unknown Series"
+    ],
+    "languages": [
+      {
+        "id": 0,
+        "name": "Unknown"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBRip-1080p"
+      }
+    },
+    "size": 1614671896,
+    "protocol": "torrent",
+    "customFormatScore": 0,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Bluray-480p is not wanted in profile",
+      "Existing file on disk is of equal or higher preference: Bluray-1080p v1"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 376038889,
+    "protocol": "usenet",
+    "customFormatScore": 11700,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Bluray-480p is not wanted in profile",
+      "Existing file on disk is of equal or higher preference: Bluray-1080p v1"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 378560638,
+    "protocol": "usenet",
+    "customFormatScore": 11700,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Bluray-480p is not wanted in profile",
+      "Existing file on disk is of equal or higher preference: Bluray-1080p v1"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 389237959,
+    "protocol": "usenet",
+    "customFormatScore": 11700,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Bluray-480p is not wanted in profile",
+      "Existing file on disk is of equal or higher preference: Bluray-1080p v1"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 405654663,
+    "protocol": "usenet",
+    "customFormatScore": 11700,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Bluray-480p is not wanted in profile",
+      "Existing file on disk is of equal or higher preference: Bluray-1080p v1"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 415364372,
+    "protocol": "usenet",
+    "customFormatScore": 11700,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Bluray-480p is not wanted in profile",
+      "Existing file on disk is of equal or higher preference: Bluray-1080p v1"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 408163404,
+    "protocol": "usenet",
+    "customFormatScore": 11700,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Bluray-480p is not wanted in profile",
+      "Existing file on disk is of equal or higher preference: Bluray-1080p v1"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 408745561,
+    "protocol": "usenet",
+    "customFormatScore": 11700,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Bluray-480p is not wanted in profile",
+      "Existing file on disk is of equal or higher preference: Bluray-1080p v1"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 417608723,
+    "protocol": "usenet",
+    "customFormatScore": 11700,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Bluray-480p is not wanted in profile",
+      "Existing file on disk is of equal or higher preference: Bluray-1080p v1"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 411034485,
+    "protocol": "usenet",
+    "customFormatScore": 11700,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Bluray-480p is not wanted in profile",
+      "Existing file on disk is of equal or higher preference: Bluray-1080p v1"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-480p"
+      }
+    },
+    "size": 415237401,
+    "protocol": "usenet",
+    "customFormatScore": 11700,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 20473057712,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": true,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4759926117,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4473639333,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4403694326,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3672473069,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3542933374,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3548627467,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4702198858,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4418460426,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4356103822,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3372476180,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 2221137277,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 2224832338,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4765081437,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4475707562,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4335379562,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3368386728,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3248410187,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3253504613,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4863885852,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4568570488,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4426499946,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3466962033,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3534027969,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3472432117,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4784031212,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4508138712,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "WEBDL-1080p"
+      }
+    },
+    "size": 4429166334,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3374354029,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 1,
+        "name": "English"
+      },
+      {
+        "id": 4,
+        "name": "German"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3306380756,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  },
+  {
+    "rejected": true,
+    "temporarilyRejected": false,
+    "approved": false,
+    "rejections": [
+      "Existing file on disk has a equal or higher Custom Format score: 13400"
+    ],
+    "languages": [
+      {
+        "id": 4,
+        "name": "German"
+      },
+      {
+        "id": 1,
+        "name": "English"
+      }
+    ],
+    "quality": {
+      "quality": {
+        "name": "Bluray-1080p"
+      }
+    },
+    "size": 3312216669,
+    "protocol": "usenet",
+    "customFormatScore": 13400,
+    "fullSeason": false,
+    "seasonNumber": 1
+  }
+]

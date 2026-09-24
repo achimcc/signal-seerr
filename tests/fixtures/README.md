@@ -1,7 +1,7 @@
 # Recorded answers
 
-Every file here is what a running Seerr 3.2.0 / Radarr instance actually sent
-on **2026-09-21**, not what somebody believed it sends. They exist because of
+Every file here is what a running Seerr 3.2.0 / Radarr / Sonarr instance actually sent
+on **2026-09-21** or **2026-09-24** (one exception, named below), not what somebody believed it sends. They exist because of
 one expensive lesson: Seerr sends `request_id` as a *string*, every test in
 this repository built it as a *number*, and all of them agreed with each other
 and none with reality. It happened a second time with `media.title`, which
@@ -37,9 +37,25 @@ and none with reality. It happened a second time with `media.title`, which
 | `radarr-queue-downloading.json` | same, one movie downloading (recorded **2026-09-22**) | everything except `movieId`, `size`, `sizeleft`, `status`, `trackedDownloadStatus`, `trackedDownloadState`, `statusMessages[].messages` (`title`, `outputPath`, `indexer`, `downloadClient`, `downloadId` dropped; `statusMessages[].title` replaced with `"x"`) |
 | `radarr-release-all-rejected-language.json` | `GET /api/v3/release?movieId={id}` — **an interactive search at every indexer; recorded once, never re-recorded casually** | `guid`, `downloadUrl`, `infoUrl`, `indexer`, `title`, `releaseGroup`, and everything else except `rejected`, `temporarilyRejected`, `approved`, `rejections`, `languages[].{id,name}`, `quality.quality.name`, `size`, `protocol`, `customFormatScore`; the film's title inside one rejection sentence was replaced |
 | `seerr-user-requests-downloading.json` | `GET /api/v1/user/1/requests?take=50`, taken during the same download as `radarr-queue-downloading.json` (recorded **2026-09-22**) | same as `seerr-user-requests.json`, plus `media.downloadStatus[].title` replaced with `"x"` and `downloadId` zeroed |
+| `sonarr-series-complete.json` | `GET /api/v3/series/1` (recorded **2026-09-24**, Sonarr 4.0.20.3014) | everything except `id`, `monitored`, `status`, `firstAired`, `nextAiring`, `previousAiring`, `qualityProfileId`, `seasons[].{seasonNumber,monitored,statistics.{episodeFileCount,episodeCount,totalEpisodeCount,nextAiring,previousAiring}}`, `statistics.{seasonCount,episodeFileCount,episodeCount,totalEpisodeCount}` |
+| `sonarr-episode-complete.json` | `GET /api/v3/episode?seriesId=1` (2026-09-24), six episodes, all on file | everything except `id`, `seriesId`, `seasonNumber`, `episodeNumber`, `airDateUtc`, `hasFile`, `monitored`, `episodeFileId` |
+| `sonarr-episode-two-missing.json` | **values edited**, structure not: the file above with episodes 4 and 5 set to `hasFile = false`, `episodeFileId = 0`, and episode 6 additionally moved to `airDateUtc = 2030-01-01T20:00:00Z` -- two missing aired episodes and one not aired yet. No running instance has been seen in this state; the shape is the recorded one | as above |
+| `sonarr-history-series.json` | `GET /api/v3/history/series?seriesId=1` (2026-09-24), the newest 20 of 2693 entries | everything except `date`, `eventType`, `seriesId`, `episodeId`, `data.reason` |
+| `sonarr-queue-empty.json` | `GET /api/v3/queue?pageSize=200&includeSeries=false` (2026-09-24), nothing downloading | — |
+| `sonarr-release-season-all-rejected.json` | `GET /api/v3/release?seriesId=1&seasonNumber=1` (2026-09-24) — **an interactive season search at every indexer; recorded once**. 80 of 662 entries, chosen to keep the mix: all 29 whose rejection names another series, 10 `Unknown Series`, 41 carrying `German`, 10 `is not wanted in profile` | as the Radarr release file; **the series titles inside the `… matches an alias for series with TVDB ID: N` sentences were replaced by `Series X` and the id by `0`** |
+| `radarr-queue-import-blocked.synthesised.json` | **not a recording.** `radarr-queue-downloading.json` with exactly one value changed: `trackedDownloadState` from `downloading` to `importBlocked`. The value comes from the source of the deployed versions (`src/NzbDrone.Core/Download/TrackedDownloads/TrackedDownload.cs`, Radarr v6.4.4.10685 and Sonarr v4.0.20.3014, identical enums: `downloading, importBlocked, importPending, importing, imported, failedPending, failed, ignored`). The first real stuck import that is seen replaces this file | — |
 
-**Not recorded yet, and therefore not built:** a queue entry stuck in
-import. Nobody has yet seen what Radarr/Sonarr call an import stuck in
-`trackedDownloadState`, so `QueueState::ImportStuck` stays unreachable (see
-the doc comment on `queue_state` in `src/arr/mod.rs`) -- this project never
-guesses a wire value.
+**Which free-text rejection sentences are backed by a recording, per service.**
+`reason_from` matches three of Radarr's fixed sentences. Radarr's recording
+carries all three (`larger than maximum allowed`, `smaller than minimum
+allowed`, `is not wanted in profile`). Sonarr's season search carries only
+`is not wanted in profile`; the size sentences have not been seen from Sonarr,
+so a Sonarr search whose releases would fall on size alone reads as
+`Otherwise` until a recording says otherwise. Sonarr's recording also shows
+two things Radarr's never did: releases that belong to another series
+(`Unknown Series`, `… matches an alias for series with TVDB ID: N`), and the
+language names `Unknown` and `Original` -- both handled in `reason_from`, both
+pinned by a test over this file.
+
+**The one synthesised file** is named so (`*.synthesised.json`) and explained
+in the table. Nothing else here was built by hand.

@@ -1,0 +1,62 @@
+[
+  {
+    "id": 1,
+    "seriesId": 1,
+    "seasonNumber": 1,
+    "episodeNumber": 1,
+    "airDateUtc": "2019-05-14T20:00:00Z",
+    "hasFile": true,
+    "monitored": true,
+    "episodeFileId": 2917
+  },
+  {
+    "id": 2,
+    "seriesId": 1,
+    "seasonNumber": 1,
+    "episodeNumber": 2,
+    "airDateUtc": "2019-05-21T20:00:00Z",
+    "hasFile": true,
+    "monitored": true,
+    "episodeFileId": 2918
+  },
+  {
+    "id": 3,
+    "seriesId": 1,
+    "seasonNumber": 1,
+    "episodeNumber": 3,
+    "airDateUtc": "2019-05-28T20:00:00Z",
+    "hasFile": true,
+    "monitored": true,
+    "episodeFileId": 2919
+  },
+  {
+    "id": 4,
+    "seriesId": 1,
+    "seasonNumber": 1,
+    "episodeNumber": 4,
+    "airDateUtc": "2019-06-04T20:00:00Z",
+    "hasFile": false,
+    "monitored": true,
+    "episodeFileId": 0
+  },
+  {
+    "id": 5,
+    "seriesId": 1,
+    "seasonNumber": 1,
+    "episodeNumber": 5,
+    "airDateUtc": "2019-06-11T20:00:00Z",
+    "hasFile": false,
+    "monitored": true,
+    "episodeFileId": 0
+  },
+  {
+    "id": 6,
+    "seriesId": 1,
+    "seasonNumber": 1,
+    "episodeNumber": 6,
+    "airDateUtc": "2030-01-01T20:00:00Z",
+    "hasFile": false,
+    "monitored": true,
+    "episodeFileId": 0
+  }
+]
