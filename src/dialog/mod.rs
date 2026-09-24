@@ -1062,6 +1062,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Requests for ExpirySeerr {
+        async fn retry(&self, _request_id: i64) -> anyhow::Result<()> {
+            unreachable!("retry is the watcher's alone")
+        }
         async fn search(
             &self,
             q: &str,

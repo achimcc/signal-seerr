@@ -255,6 +255,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Requests for FakeSeerr {
+        async fn retry(&self, _request_id: i64) -> anyhow::Result<()> {
+            unreachable!("retry is the watcher's alone")
+        }
         async fn search(
             &self,
             _q: &str,

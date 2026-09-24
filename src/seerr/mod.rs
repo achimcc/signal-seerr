@@ -32,6 +32,12 @@ pub trait Requests: Send + Sync {
     /// answer this.
     async fn open_wishes(&self) -> Result<Vec<Wish>>;
     async fn withdraw(&self, id: i64, as_user: SeerrUserId) -> Result<()>;
+    /// Hands a FAILED request to Radarr/Sonarr once more
+    /// (`POST /api/v1/request/{id}/retry`, `seerr-api.yml` 3.2.0: "Retries
+    /// a request by resending requests to Sonarr or Radarr", needs
+    /// `MANAGE_REQUESTS` or `ADMIN` -- the bot's key is the latter). Only the
+    /// watcher calls it, once per wish; see `watch.rs`.
+    async fn retry(&self, request_id: i64) -> Result<()>;
     /// Who asked for this request — the Authentik username, read from Seerr
     /// rather than taken from a webhook payload. See the note in Task 13.
     async fn requester_of(&self, request_id: i64) -> Result<Option<String>>;
@@ -82,6 +88,9 @@ impl<T: Requests + ?Sized> Requests for std::sync::Arc<T> {
     }
     async fn withdraw(&self, id: i64, as_user: SeerrUserId) -> Result<()> {
         (**self).withdraw(id, as_user).await
+    }
+    async fn retry(&self, request_id: i64) -> Result<()> {
+        (**self).retry(request_id).await
     }
     async fn requester_of(&self, request_id: i64) -> Result<Option<String>> {
         (**self).requester_of(request_id).await
@@ -577,6 +586,23 @@ impl Requests for SeerrClient {
         }
         Ok(())
     }
+
+    async fn retry(&self, request_id: i64) -> Result<()> {
+        // No `X-API-User`: the retry is the bot's own act, not something
+        // done in a person's name, and the key is an administrator's.
+        let response = self
+            .http
+            .post(format!("{}/api/v1/request/{request_id}/retry", self.base))
+            .header("X-Api-Key", self.key.expose())
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            // The body is not echoed: it can carry the request's title.
+            bail!("seerr answered {status} to a retry of request {request_id}");
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -591,6 +617,9 @@ mod arc_requests_tests {
 
     #[async_trait]
     impl Requests for MockRequests {
+        async fn retry(&self, _request_id: i64) -> Result<()> {
+            unreachable!("retry is the watcher's alone")
+        }
         async fn search(
             &self,
             _query: &str,

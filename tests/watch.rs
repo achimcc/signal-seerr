@@ -45,10 +45,21 @@ struct FakeSeerr {
     /// `open_wishes` fails -- an outage, not an empty list.
     fail: AtomicBool,
     title: Option<String>,
+    /// Every request id a `retry` was asked for, in order.
+    retry_calls: Mutex<Vec<i64>>,
+    /// `retry` fails -- Seerr took the call and answered 5xx.
+    retry_fail: AtomicBool,
 }
 
 #[async_trait::async_trait]
 impl Requests for FakeSeerr {
+    async fn retry(&self, request_id: i64) -> anyhow::Result<()> {
+        self.retry_calls.lock().unwrap().push(request_id);
+        if self.retry_fail.load(Ordering::SeqCst) {
+            anyhow::bail!("seerr answered 500 to the retry");
+        }
+        Ok(())
+    }
     async fn open_wishes(&self) -> anyhow::Result<Vec<Wish>> {
         if self.fail.load(Ordering::SeqCst) {
             anyhow::bail!("seerr is down");

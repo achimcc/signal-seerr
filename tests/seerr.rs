@@ -1,4 +1,4 @@
-use signal_seerr::model::{MediaKind, SeerrUserId};
+use signal_seerr::model::{MediaKind, SeerrUserId, Wish};
 use signal_seerr::secret::Secret;
 use signal_seerr::seerr::{Requests, SeerrClient};
 use wiremock::matchers::{header, method, path, query_param};
@@ -648,4 +648,79 @@ async fn a_chosen_profile_travels_as_profile_id_and_none_omits_the_key() {
         .await
         .expect("no choice means no key at all, not a null");
     assert_eq!(id, 56);
+}
+
+/// The recording's three tv requests each name four seasons, its movies
+/// none -- read through `pending`, whose answer has the same shape as
+/// `/request` (both measured 2026-09-21; the seasons on 2026-09-24).
+#[tokio::test]
+async fn a_tv_wish_carries_its_season_numbers_and_a_movie_none() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/user/1/requests"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(REQUEST_ALL, "application/json"))
+        .mount(&server)
+        .await;
+
+    let wishes = client(&server).pending(SeerrUserId(1)).await.unwrap();
+    let tv: Vec<&Wish> = wishes.iter().filter(|w| w.kind == MediaKind::Tv).collect();
+    assert!(!tv.is_empty(), "the recording has series");
+    // Against the recording's own numbers (three series: four, two and one
+    // season), not against a list this test believes in.
+    let raw: serde_json::Value = serde_json::from_str(REQUEST_ALL).unwrap();
+    let recorded: Vec<Vec<u16>> = raw["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["type"] == "tv")
+        .map(|r| {
+            r["seasons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["seasonNumber"].as_u64().unwrap() as u16)
+                .collect()
+        })
+        .collect();
+    let read: Vec<Vec<u16>> = tv.iter().map(|w| w.seasons.clone()).collect();
+    assert_eq!(read, recorded);
+    assert!(recorded.iter().any(|s| s.len() > 1));
+    assert!(wishes
+        .iter()
+        .filter(|w| w.kind == MediaKind::Movie)
+        .all(|w| w.seasons.is_empty()));
+}
+
+#[tokio::test]
+async fn retry_posts_to_the_retry_route_and_is_ok_on_200() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/request/19/retry"))
+        .and(header("X-Api-Key", "k-e-y"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("{\"id\":19}", "application/json"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client(&server).retry(19).await.unwrap();
+}
+
+#[tokio::test]
+async fn retry_reports_a_non_200_without_the_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/request/19/retry"))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .set_body_raw("{\"message\":\"Der Wunsch\"}", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let err = client(&server).retry(19).await.unwrap_err().to_string();
+    assert!(err.contains("500"), "{err}");
+    assert!(
+        !err.contains("Der Wunsch"),
+        "the body must not travel: {err}"
+    );
 }
