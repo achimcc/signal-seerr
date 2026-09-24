@@ -1,4 +1,4 @@
-use signal_seerr::arr::{ArrMovie, HistoryEvent, Insight, QueueItem};
+use signal_seerr::arr::{ArrMovie, ArrSeries, HistoryEvent, Insight, QueueItem};
 use signal_seerr::dialog::Dialog;
 use signal_seerr::directory::{Directory, Member};
 use signal_seerr::i18n::{Catalogue, Locale};
@@ -140,6 +140,9 @@ pub struct FakeInsight {
     pub fail: bool,
     pub movie_calls: Mutex<Vec<i64>>,
     pub queue_calls: Mutex<Vec<MediaKind>>,
+    /// arr id -> what Sonarr says about that series.
+    pub series: Vec<(i64, ArrSeries)>,
+    pub series_calls: Mutex<Vec<i64>>,
 }
 
 #[async_trait::async_trait]
@@ -154,6 +157,17 @@ impl Insight for FakeInsight {
             .find(|(known, _)| *known == id)
             .map(|(_, movie)| movie.clone())
             .ok_or_else(|| anyhow::anyhow!("radarr knows no movie {id}"))
+    }
+    async fn series(&self, id: i64) -> anyhow::Result<ArrSeries> {
+        self.series_calls.lock().unwrap().push(id);
+        if self.fail {
+            anyhow::bail!("sonarr is down");
+        }
+        self.series
+            .iter()
+            .find(|(known, _)| *known == id)
+            .map(|(_, series)| series.clone())
+            .ok_or_else(|| anyhow::anyhow!("sonarr knows no series {id}"))
     }
     async fn queue(&self, kind: MediaKind) -> anyhow::Result<Vec<QueueItem>> {
         self.queue_calls.lock().unwrap().push(kind);

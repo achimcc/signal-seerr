@@ -34,6 +34,14 @@ const QUEUE_EMPTY: &str = include_str!("fixtures/radarr-queue-empty.json");
 const QUEUE_DOWNLOADING: &str = include_str!("fixtures/radarr-queue-downloading.json");
 const RELEASES_ALL_REJECTED: &str =
     include_str!("fixtures/radarr-release-all-rejected-language.json");
+/// Recorded on 2026-09-24 from Sonarr 4.0.20.3014 (see the README) -- and the
+/// one file among them that is NOT a recording says so in its name.
+const SERIES_COMPLETE: &str = include_str!("fixtures/sonarr-series-complete.json");
+const EPISODES_COMPLETE: &str = include_str!("fixtures/sonarr-episode-complete.json");
+const EPISODES_TWO_MISSING: &str = include_str!("fixtures/sonarr-episode-two-missing.json");
+const SEASON_RELEASES: &str = include_str!("fixtures/sonarr-release-season-all-rejected.json");
+const QUEUE_IMPORT_BLOCKED: &str =
+    include_str!("fixtures/radarr-queue-import-blocked.synthesised.json");
 
 #[tokio::test]
 async fn an_announced_movie_is_not_available() {
@@ -460,4 +468,137 @@ async fn the_release_deadline_is_two_minutes_and_the_others_twenty_seconds() {
         signal_seerr::arr::STANDARD_DEADLINE,
         Duration::from_secs(20)
     );
+}
+
+// -- series evidence and the season search (2026-09-24) ---------------------
+
+fn sonarr_client(server: &MockServer) -> ArrClient {
+    ArrClient::new(
+        "http://radarr.invalid",
+        Secret::from("k-e-y".to_string()),
+        Some((&server.uri(), Secret::from("s-o-n-a-r-r".to_string()))),
+    )
+}
+
+async fn mount_series(server: &MockServer, episodes: &'static str) {
+    Mock::given(method("GET"))
+        .and(path("/api/v3/series/1"))
+        .and(header("X-Api-Key", "s-o-n-a-r-r"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(SERIES_COMPLETE, "application/json"))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v3/episode"))
+        .and(query_param("seriesId", "1"))
+        .and(header("X-Api-Key", "s-o-n-a-r-r"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(episodes, "application/json"))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test]
+async fn a_complete_series_has_every_episode_on_file() {
+    let server = MockServer::start().await;
+    mount_series(&server, EPISODES_COMPLETE).await;
+
+    let series = sonarr_client(&server).series(1).await.unwrap();
+    assert!(series.monitored);
+    assert_eq!(series.monitored_seasons, vec![1]);
+    assert_eq!(series.episodes.len(), 6);
+    assert!(series.episodes.iter().all(|e| e.has_file && e.monitored));
+    assert!(series.episodes.iter().all(|e| e.air_date.is_some()));
+    assert_eq!(series.episodes[0].season, 1);
+    assert_eq!(series.episodes[0].number, 1);
+}
+
+#[tokio::test]
+async fn two_missing_episodes_and_one_unaired_are_read_as_such() {
+    let server = MockServer::start().await;
+    mount_series(&server, EPISODES_TWO_MISSING).await;
+
+    let series = sonarr_client(&server).series(1).await.unwrap();
+    let missing: Vec<u16> = series
+        .episodes
+        .iter()
+        .filter(|e| !e.has_file)
+        .map(|e| e.number)
+        .collect();
+    assert_eq!(missing, vec![4, 5, 6]);
+    let unaired = series.episodes.iter().find(|e| e.number == 6).unwrap();
+    assert_eq!(unaired.air_date.unwrap().year(), 2030);
+}
+
+#[tokio::test]
+async fn season_releases_hits_release_with_series_and_season() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v3/release"))
+        .and(query_param("seriesId", "1"))
+        .and(query_param("seasonNumber", "1"))
+        .and(header("X-Api-Key", "s-o-n-a-r-r"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(SEASON_RELEASES, "application/json"))
+        .mount(&server)
+        .await;
+
+    let releases = sonarr_client(&server).season_releases(1, 1).await.unwrap();
+    assert_eq!(releases.len(), 80);
+    assert!(releases.iter().all(|r| r.rejected));
+    // The recording carries other series' releases; the client keeps them
+    // (it is `reason_from` that drops them) -- and it reads the language
+    // names off the `{id, name}` objects as it does for Radarr.
+    assert!(releases
+        .iter()
+        .any(|r| r.languages.iter().any(|l| l == "German")));
+    assert!(releases
+        .iter()
+        .any(|r| r.rejections.iter().any(|s| s == "Unknown Series")));
+}
+
+#[tokio::test]
+async fn a_series_call_without_sonarr_configured_is_an_error() {
+    let server = MockServer::start().await;
+    let err = client(&server).series(1).await.unwrap_err();
+    assert!(err.to_string().contains("sonarr is not configured"));
+    let err = client(&server).season_releases(1, 1).await.unwrap_err();
+    assert!(err.to_string().contains("sonarr is not configured"));
+}
+
+// -- a stuck import, from the source's enum ---------------------------------
+
+#[tokio::test]
+async fn a_stuck_import_is_import_stuck() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v3/queue"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(QUEUE_IMPORT_BLOCKED, "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let queue = client(&server).queue(MediaKind::Movie).await.unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].state, QueueState::ImportStuck);
+}
+
+#[tokio::test]
+async fn importing_and_an_unknown_value_stay_downloading() {
+    // Built from the recorded downloading queue with the one value swapped
+    // -- the same way the synthesised fixture was made, for the values the
+    // table maps to "still downloading".
+    for value in ["importing", "imported", "ignored", "somethingNew"] {
+        let body = QUEUE_DOWNLOADING.replace("\"downloading\"", &format!("\"{value}\""));
+        assert_ne!(
+            body, QUEUE_DOWNLOADING,
+            "the swap must have happened for {value}"
+        );
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v3/queue"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+        let queue = client(&server).queue(MediaKind::Movie).await.unwrap();
+        assert_eq!(queue[0].state, QueueState::Downloading, "{value}");
+    }
 }

@@ -35,6 +35,32 @@ pub struct ArrMovie {
     pub physical_release: Option<time::OffsetDateTime>,
 }
 
+/// One episode of a series, as far as this bot ever needs to know it: which
+/// one it is, whether it has aired, whether it is on disk, whether Sonarr
+/// wants it at all. No title -- `title` is not deserialised.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArrEpisode {
+    pub season: u16,
+    pub number: u16,
+    /// `None` when Sonarr does not know the date yet. Such an episode has
+    /// neither aired nor is it missing -- see `insight::series_facts`.
+    pub air_date: Option<time::OffsetDateTime>,
+    pub has_file: bool,
+    pub monitored: bool,
+}
+
+/// A series with its episodes -- two calls on the wire (`series/<id>` and
+/// `episode?seriesId=<id>`), one value here, so that the dialog and the
+/// watcher gather the same evidence through the same function instead of
+/// building it twice.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArrSeries {
+    pub monitored: bool,
+    /// The numbers of the seasons Sonarr monitors.
+    pub monitored_seasons: Vec<u16>,
+    pub episodes: Vec<ArrEpisode>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueState {
     Downloading,
@@ -86,6 +112,9 @@ where
 #[async_trait]
 pub trait Insight: Send + Sync {
     async fn movie(&self, id: i64) -> Result<ArrMovie>;
+    /// A series with all its episodes (two GETs). An error when Sonarr is
+    /// not configured, cannot be reached, or answers something else.
+    async fn series(&self, id: i64) -> Result<ArrSeries>;
     async fn queue(&self, kind: MediaKind) -> Result<Vec<QueueItem>>;
     async fn last_event(&self, kind: MediaKind, id: i64) -> Result<Option<HistoryEvent>>;
 }
@@ -95,23 +124,36 @@ pub trait Insight: Send + Sync {
 #[async_trait]
 pub trait ReleaseSearch: Send + Sync {
     async fn releases(&self, movie_id: i64) -> Result<Vec<Release>>;
+    /// Sonarr's interactive SEASON search (`release?seriesId=&seasonNumber=`,
+    /// `ReleaseController.GetReleases` in 4.0.20). The same three fields
+    /// come back as from Radarr -- and a good deal else besides, which
+    /// `insight::reason_from` drops first (releases of other series).
+    async fn season_releases(&self, series_id: i64, season: u16) -> Result<Vec<Release>>;
 }
 
-/// Which of `trackedDownloadState`'s values means a download in progress, as
-/// opposed to an import stuck, mapped only from what a running instance has
-/// actually sent -- this project never guesses a wire value.
+/// Which of `trackedDownloadState`'s values means a download in progress,
+/// as opposed to an import that is stuck.
 ///
-/// `"downloading"` is recorded (`radarr-queue-downloading.json`, see
-/// `tests/fixtures/README.md`) and means `QueueState::Downloading`.
-/// `QueueState::ImportStuck` stays unreachable: which value
-/// `trackedDownloadState` carries for a stuck import has **not** been
-/// recorded yet, so nothing here claims to know it. Every other value --
-/// including one never seen at all -- keeps the same answer, `Downloading`,
-/// for the same reason: there is nothing recorded that says otherwise.
+/// THE VALUES COME FROM THE SOURCE OF THE DEPLOYED VERSIONS, not from a
+/// guess and not (yet) from a recording of a stuck import -- no running
+/// instance here has shown one. `TrackedDownloadState` in
+/// `src/NzbDrone.Core/Download/TrackedDownloads/TrackedDownload.cs` is the
+/// same eight-member enum in Radarr v6.4.4.10685 and Sonarr v4.0.20.3014:
+/// `Downloading, ImportBlocked, ImportPending, Importing, Imported,
+/// FailedPending, Failed, Ignored`, serialised camelCase (`"downloading"` is
+/// recorded, `radarr-queue-downloading.json`).
+///
+/// Four of them are a download that finished and did not make it into the
+/// library on its own: blocked or pending an import decision, or failed
+/// (pending removal or not). `importing` and `imported` are transitions,
+/// not a state anybody is stuck in. Everything else -- including a value
+/// this project has never seen -- stays `Downloading`, for the same reason
+/// as before: nothing on record says otherwise.
 fn queue_state(tracked: Option<&str>) -> QueueState {
     match tracked {
-        Some("downloading") => QueueState::Downloading,
-        // No recording tells the two apart yet -- see the doc comment above.
+        Some("importBlocked" | "importPending" | "failedPending" | "failed") => {
+            QueueState::ImportStuck
+        }
         _ => QueueState::Downloading,
     }
 }
@@ -334,6 +376,44 @@ impl Insight for ArrClient {
         })
     }
 
+    async fn series(&self, id: i64) -> Result<ArrSeries> {
+        let (base, key, service) = self.service(MediaKind::Tv)?;
+        // Two typed reads, no `serde_json::Value` in between: the series
+        // answer carries the title, the path on disk and the poster URLs,
+        // the episode answer every episode's title and overview. None of
+        // that is named in the wire types, so serde drops it as it reads.
+        let series: SeriesWire = self
+            .get(base, key, service, &format!("/api/v3/series/{id}"))
+            .await?;
+        let episodes: Vec<EpisodeWire> = self
+            .get(
+                base,
+                key,
+                service,
+                &format!("/api/v3/episode?seriesId={id}"),
+            )
+            .await?;
+        Ok(ArrSeries {
+            monitored: series.monitored,
+            monitored_seasons: series
+                .seasons
+                .into_iter()
+                .filter(|s| s.monitored)
+                .map(|s| s.season_number)
+                .collect(),
+            episodes: episodes
+                .into_iter()
+                .map(|e| ArrEpisode {
+                    season: e.season_number,
+                    number: e.episode_number,
+                    air_date: e.air_date_utc,
+                    has_file: e.has_file,
+                    monitored: e.monitored,
+                })
+                .collect(),
+        })
+    }
+
     async fn queue(&self, kind: MediaKind) -> Result<Vec<QueueItem>> {
         let (base, key, service) = self.service(kind)?;
         let (path, id_field) = match kind {
@@ -412,4 +492,47 @@ impl ReleaseSearch for ArrClient {
         )
         .await
     }
+
+    async fn season_releases(&self, series_id: i64, season: u16) -> Result<Vec<Release>> {
+        let (base, key, service) = self.service(MediaKind::Tv)?;
+        self.get_within(
+            base,
+            key,
+            service,
+            &format!("/api/v3/release?seriesId={series_id}&seasonNumber={season}"),
+            self.release_deadline,
+        )
+        .await
+    }
+}
+
+/// The wire shape of `series/<id>`, reduced to what is read. Recorded
+/// 2026-09-24 (`sonarr-series-complete.json`).
+#[derive(serde::Deserialize)]
+struct SeriesWire {
+    monitored: bool,
+    #[serde(default)]
+    seasons: Vec<SeasonWire>,
+}
+
+#[derive(serde::Deserialize)]
+struct SeasonWire {
+    #[serde(rename = "seasonNumber")]
+    season_number: u16,
+    monitored: bool,
+}
+
+/// The wire shape of one entry of `episode?seriesId=<id>`, reduced to what
+/// is read. `airDateUtc` is absent or null for an episode without a date.
+#[derive(serde::Deserialize)]
+struct EpisodeWire {
+    #[serde(rename = "seasonNumber")]
+    season_number: u16,
+    #[serde(rename = "episodeNumber")]
+    episode_number: u16,
+    #[serde(rename = "airDateUtc", default, with = "time::serde::rfc3339::option")]
+    air_date_utc: Option<time::OffsetDateTime>,
+    #[serde(rename = "hasFile")]
+    has_file: bool,
+    monitored: bool,
 }

@@ -8,7 +8,7 @@
 //! would never be run.
 
 use signal_seerr::arr::{
-    ArrMovie, HistoryEvent, Insight, QueueItem, QueueState, Release, ReleaseSearch,
+    ArrMovie, ArrSeries, HistoryEvent, Insight, QueueItem, QueueState, Release, ReleaseSearch,
 };
 use signal_seerr::dialog::state_text;
 use signal_seerr::i18n::{Catalogue, Locale};
@@ -116,6 +116,11 @@ struct FakeArr {
     /// Subsumes a plain counter: which kind was asked matters as much as
     /// how often (a movie-only round must not touch Sonarr).
     queue_kinds: Mutex<Vec<MediaKind>>,
+    /// arr id -> what Sonarr says about that series.
+    series: Mutex<Vec<(i64, ArrSeries)>>,
+    series_calls: AtomicUsize,
+    /// The season each season search asked for, in order.
+    season_release_calls: Mutex<Vec<u16>>,
 }
 
 #[async_trait::async_trait]
@@ -129,6 +134,16 @@ impl Insight for FakeArr {
             .find(|(known, _)| *known == id)
             .map(|(_, movie)| movie.clone())
             .ok_or_else(|| anyhow::anyhow!("radarr knows no movie {id}"))
+    }
+    async fn series(&self, id: i64) -> anyhow::Result<ArrSeries> {
+        self.series_calls.fetch_add(1, Ordering::SeqCst);
+        self.series
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(known, _)| *known == id)
+            .map(|(_, series)| series.clone())
+            .ok_or_else(|| anyhow::anyhow!("sonarr knows no series {id}"))
     }
     async fn queue(&self, kind: MediaKind) -> anyhow::Result<Vec<QueueItem>> {
         self.queue_kinds.lock().unwrap().push(kind);
@@ -156,6 +171,13 @@ impl ReleaseSearch for FakeArr {
         self.release_calls.fetch_add(1, Ordering::SeqCst);
         if self.releases_fail {
             anyhow::bail!("radarr's indexers are unreachable");
+        }
+        Ok(self.releases.clone())
+    }
+    async fn season_releases(&self, _series_id: i64, season: u16) -> anyhow::Result<Vec<Release>> {
+        self.season_release_calls.lock().unwrap().push(season);
+        if self.releases_fail {
+            anyhow::bail!("sonarr's indexers are unreachable");
         }
         Ok(self.releases.clone())
     }

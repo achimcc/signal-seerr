@@ -15,7 +15,7 @@
 //! emit it -- not what a round does with a wish, which `tests/watch.rs`
 //! covers at length.
 
-use signal_seerr::arr::{ArrMovie, HistoryEvent, Insight, QueueItem};
+use signal_seerr::arr::{ArrMovie, ArrSeries, HistoryEvent, Insight, QueueItem};
 use signal_seerr::i18n::Catalogue;
 use signal_seerr::model::{Aci, Hit, MediaKind, QualityProfile, Seasons, SeerrUserId, Wish};
 use signal_seerr::notices::Notices;
@@ -187,6 +187,9 @@ struct EmptyArr;
 #[async_trait::async_trait]
 impl Insight for EmptyArr {
     async fn movie(&self, _id: i64) -> anyhow::Result<ArrMovie> {
+        unreachable!("no wish to look up")
+    }
+    async fn series(&self, _id: i64) -> anyhow::Result<ArrSeries> {
         unreachable!("no wish to look up")
     }
     async fn queue(&self, _kind: MediaKind) -> anyhow::Result<Vec<QueueItem>> {
