@@ -1,4 +1,4 @@
-use signal_seerr::arr::{ArrMovie, ArrSeries, HistoryEvent, Insight, QueueItem};
+use signal_seerr::arr::{ArrEpisode, ArrMovie, ArrSeries, HistoryEvent, Insight, QueueItem};
 use signal_seerr::dialog::Dialog;
 use signal_seerr::directory::{Directory, Member};
 use signal_seerr::i18n::{Catalogue, Locale};
@@ -1504,4 +1504,95 @@ async fn a_failing_lookup_leaves_the_ordinary_confirmation() {
         1,
         "the wish itself went out all the same"
     );
+}
+
+// -- series and Declined in /status (0.5.0) ----------------------------------
+
+fn tv_wish(id: i64, arr_id: i64, seasons: Vec<u16>) -> Wish {
+    let mut w = wish(id, Some(arr_id));
+    w.kind = MediaKind::Tv;
+    w.seasons = seasons;
+    w
+}
+
+fn episode(season: u16, number: u16, days_from_now: i64, has_file: bool) -> ArrEpisode {
+    ArrEpisode {
+        season,
+        number,
+        air_date: Some(now() + time::Duration::days(days_from_now)),
+        has_file,
+        monitored: true,
+    }
+}
+
+/// A series with a gap is "still looking"; one that is complete so far
+/// names the next air date; one with nothing aired names the first. Each
+/// line comes from Sonarr's episode list, read through `Insight::series` --
+/// and never through anything that could search.
+#[tokio::test]
+async fn status_reads_a_series_off_its_episodes() {
+    let seerr = FakeSeerr {
+        wishes: vec![
+            tv_wish(1, 42, vec![1]),
+            tv_wish(2, 43, vec![1]),
+            tv_wish(3, 44, vec![1]),
+        ],
+        title: Some("Die Serie".into()),
+        ..Default::default()
+    };
+    let with_gap = ArrSeries {
+        monitored: true,
+        monitored_seasons: vec![1],
+        episodes: vec![episode(1, 1, -30, true), episode(1, 2, -20, false)],
+    };
+    let complete_so_far = ArrSeries {
+        monitored: true,
+        monitored_seasons: vec![1],
+        episodes: vec![episode(1, 1, -30, true), episode(1, 2, 7, false)],
+    };
+    let not_aired = ArrSeries {
+        monitored: true,
+        monitored_seasons: vec![1],
+        episodes: vec![episode(1, 1, 14, false)],
+    };
+    let insight = Arc::new(FakeInsight {
+        series: vec![(42, with_gap), (43, complete_so_far), (44, not_aired)],
+        ..Default::default()
+    });
+    let mut d = status_dialog(seerr, Some(insight.clone()), None);
+
+    let out = d.handle(&Aci("aaaa".into()), "/status").await.join("\n");
+    let c = Catalogue::load();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 3, "{out}");
+    assert!(
+        lines[0].ends_with(&c.text(Locale::De, "status.searching", &[])),
+        "{out}"
+    );
+    assert!(lines[1].contains("die nächste kommt am"), "{out}");
+    assert!(lines[2].contains("die erste Folge kommt am"), "{out}");
+    assert_eq!(*insight.series_calls.lock().unwrap(), vec![42, 43, 44]);
+    assert!(insight.movie_calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn status_calls_a_declined_wish_declined_without_asking_anybody() {
+    let mut declined = wish(1, Some(42));
+    declined.request_status = 3;
+    let seerr = FakeSeerr {
+        wishes: vec![declined],
+        title: Some("Der Wunsch".into()),
+        ..Default::default()
+    };
+    let insight = Arc::new(FakeInsight::default());
+    let mut d = status_dialog(seerr, Some(insight.clone()), None);
+
+    let out = d.handle(&Aci("aaaa".into()), "/status").await.join("\n");
+    let c = Catalogue::load();
+    assert!(
+        out.ends_with(&c.text(Locale::De, "status.declined", &[])),
+        "{out}"
+    );
+    assert!(insight.movie_calls.lock().unwrap().is_empty());
+    assert!(insight.queue_calls.lock().unwrap().is_empty());
 }

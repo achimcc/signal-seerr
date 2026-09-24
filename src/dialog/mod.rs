@@ -5,7 +5,7 @@ pub use status::state_text;
 use crate::arr::{Insight, QueueItem};
 use crate::directory::Directory;
 use crate::i18n::{Catalogue, Locale};
-use crate::insight::{classify, Evidence};
+use crate::insight::{classify, series_facts, Evidence};
 use crate::model::{
     Aci, Hit, MediaKind, QualityProfile, Reason, Seasons, SeerrUserId, Wish, WishState,
 };
@@ -68,7 +68,10 @@ fn is_shown(wish: &Wish, now: OffsetDateTime) -> bool {
 /// id. Such a wish ends up `Waiting`, which is what `seerr_alone_text`
 /// answers.
 fn needs_evidence(wish: &Wish) -> bool {
-    wish.media_status != 5 && wish.request_status != 4 && wish.arr_id.is_some()
+    wish.media_status != 5
+        && wish.request_status != 3
+        && wish.request_status != 4
+        && wish.arr_id.is_some()
 }
 
 /// The queues read for this one `/status` call. `None` means "not read" --
@@ -774,22 +777,32 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
 
         let item = queue.iter().find(|q| q.arr_id == arr_id).cloned();
         let mut movie = None;
+        let mut facts = None;
         let mut last_event = None;
-        // Only for a film, and only when the queue does not already answer:
-        // Sonarr has no "movie", and a series in the queue is the whole
-        // story anyway.
-        if item.is_none() && matches!(wish.kind, MediaKind::Movie) {
-            match insight.movie(arr_id).await {
-                Ok(found) => movie = Some(found),
-                Err(e) => {
-                    tracing::warn!(error = %e, arr_id, "cannot read the film");
-                    return self.seerr_alone_text(locale, wish);
-                }
+        // Only when the queue does not already answer: a wish in the queue
+        // is the whole story anyway. A film is asked about in Radarr, a
+        // series in Sonarr -- whose episode list is the evidence.
+        if item.is_none() {
+            match wish.kind {
+                MediaKind::Movie => match insight.movie(arr_id).await {
+                    Ok(found) => movie = Some(found),
+                    Err(e) => {
+                        tracing::warn!(error = %e, arr_id, "cannot read the film");
+                        return self.seerr_alone_text(locale, wish);
+                    }
+                },
+                MediaKind::Tv => match insight.series(arr_id).await {
+                    Ok(found) => facts = Some(series_facts(&found, &wish.seasons, now)),
+                    Err(e) => {
+                        tracing::warn!(error = %e, arr_id, "cannot read the series");
+                        return self.seerr_alone_text(locale, wish);
+                    }
+                },
             }
-            match insight.last_event(MediaKind::Movie, arr_id).await {
+            match insight.last_event(wish.kind, arr_id).await {
                 Ok(found) => last_event = found,
                 Err(e) => {
-                    tracing::warn!(error = %e, arr_id, "cannot read the film's history");
+                    tracing::warn!(error = %e, arr_id, "cannot read the wish's history");
                     return self.seerr_alone_text(locale, wish);
                 }
             }
@@ -797,7 +810,7 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
 
         let evidence = Evidence {
             movie: movie.as_ref(),
-            series: None,
+            series: facts.as_ref(),
             queue_item: item.as_ref(),
             last_event,
             known_reason,
@@ -828,6 +841,8 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
     fn seerr_alone_text(&self, locale: Locale, wish: &Wish) -> String {
         if wish.media_status == 5 {
             state_text(&self.catalogue, locale, &WishState::Available)
+        } else if wish.request_status == 3 {
+            state_text(&self.catalogue, locale, &WishState::Declined)
         } else if wish.request_status == 4 {
             state_text(&self.catalogue, locale, &WishState::NotHandedOver)
         } else if let Some(percent) = wish.download_percent {
