@@ -219,24 +219,49 @@ version this household accepts.
 The optional `[insight]` section gives the bot read-only access to Radarr and
 Sonarr, and with it two things:
 
-**`/status` says what is actually the case.** Ten states, each backed by
-something measured rather than assumed — *available*, *part of it is here, the
-rest is still coming*, *downloading, 43 %*, *downloaded, but stuck on the
-last step*, *not out for home viewing yet (expected from …)*, *one attempt
-failed, I'm still looking*, *still looking, nothing suitable so far*, *so far
-only available in Portuguese*, *I couldn't put it on the list*, and plain
-*waiting* where nothing was measured at all. That last one matters: without
-`[insight]`, and for anything the bot has no evidence about, it says
-*waiting* instead of claiming a search nobody made.
+**`/status` says what is actually the case.** Every state is backed by
+something measured rather than assumed — *available*, *downloading, 43 %*,
+*downloaded, but stuck on the last step*, *not out for home viewing yet
+(expected from …)*, *one attempt failed, I'm still looking*, *still looking,
+nothing suitable so far*, *so far only available in Portuguese*, *I couldn't
+put it on the list*, *was declined*, and plain *waiting* where nothing was
+measured at all. That last one matters: without `[insight]`, and for anything
+the bot has no evidence about, it says *waiting* instead of claiming a search
+nobody made.
+
+**A series is read off its episodes** (since 0.5.0). With `sonarr_url` set,
+the bot reads Sonarr's episode list for the seasons the request names and
+says *not aired yet (the first episode comes on …)*, *every episode aired so
+far is here, the next one comes on …*, or — where an aired episode is missing
+— *still looking* and, after the search, *so far only available in …* for
+that season. A series Sonarr cannot answer about stays *waiting*.
 
 **The bot speaks up unasked when a wish is stuck.** Once per request and per
 kind of problem — never twice for the same thing, and never more than one
 unasked message about the same request per day — after `stall_after_hours`
-have passed with no progress. Three kinds of problem count: nothing suitable
-found, a failed download attempt, and a download that finished but is stuck
-on the import. What has already been said is kept in `notices_file`, and a
-reason an indexer search turned up is written there *before* anybody is told
-about it, so a message that never got sent never costs a second search.
+have passed with no progress. Four kinds of problem count: nothing suitable
+found, a failed download attempt, a download that finished but is stuck on
+the import, and a hand-over to Radarr/Sonarr that failed twice (see the
+retry below). For a film the clock runs from its release, for a series from
+the air date of the oldest missing episode. What has already been said is
+kept in `notices_file`, and a reason an indexer search turned up is written
+there *before* anybody is told about it, so a message that never got sent
+never costs a second search.
+
+**A failed hand-over is retried once, by the bot.** Seerr sometimes fails to
+hand a request to Radarr or Sonarr (its `MEDIA_FAILED`); the person used to
+be told to try again in a few minutes. Now the bot does that itself: after
+`retry_failed_after_minutes` it calls Seerr's `POST /request/{id}/retry`
+once — recorded before the call, so there is never a second attempt — and
+only if the request is *still* failed a day later is the person told, once,
+that somebody needs to look at it. `0` switches the retry off.
+
+**A recorded reason is refreshed.** "Only in Portuguese" is true on the day
+it was searched. After `refresh_reason_after_days` the bot searches once
+more (within the same daily budget, after every first search of the round)
+and tells the person again **only if the class changed** — the Portuguese
+film now exists in German but is too big, say. The same class again is not
+news and costs nothing but the search. `0` switches the refresh off.
 
 ```toml
 [insight]
@@ -253,6 +278,9 @@ stall_after_hours = 24    # no progress for this long = stuck
 
 reason_search               = false
 max_reason_searches_per_day = 5
+
+retry_failed_after_minutes = 10   # 0: never hand a failed request over again
+refresh_reason_after_days  = 7    # 0: never search a recorded reason again
 
 notices_file = "/var/lib/signal-seerr/notices.json"
 
@@ -318,12 +346,17 @@ alone; an indexer's name, a release's name and the operator's own
 custom-format scores are never deserialised, never logged and never sent to
 anybody.
 
-**A series gets no reason search.** Sonarr has no equivalent of Radarr's
-per-movie interactive search here, so a series is judged from its queue and
-its history only: it can be *available*, *part of it is here*, *downloading*,
-*stuck on the last step*, *one attempt failed*, or *waiting* — but never
-"only available in …". That is a limit of what was measured, not a gap
-waiting to be filled with a guess.
+**A series is searched by season** (since 0.5.0): Sonarr's interactive
+season search, `/api/v3/release?seriesId=&seasonNumber=`, for the season of
+the oldest aired episode that is missing. Same budget, same deadline, same
+rules — and two more, because a season search comes back with a good deal
+that is not about this series: releases Sonarr rejects as *Unknown Series* or
+as matching *another* series' alias are dropped before anything is judged,
+and the language names *Unknown* and *Original* are never what something is
+"only available in". Which of Radarr's fixed rejection sentences Sonarr has
+actually been seen to send is written down in `tests/fixtures/README.md`; a
+sentence not seen from Sonarr simply never matches there, and the reason
+falls back to the general one.
 
 ### Put a filtering proxy in front of Radarr and Sonarr
 
@@ -343,8 +376,11 @@ So give the bot a reverse proxy instead of the arr itself, and let through
 | Radarr | `/api/v3/queue` |
 | Radarr | `/api/v3/history/movie` |
 | Radarr | `/api/v3/release` |
+| Sonarr | `/api/v3/series/{id}` |
+| Sonarr | `/api/v3/episode` (with `seriesId=`) |
 | Sonarr | `/api/v3/queue` |
 | Sonarr | `/api/v3/history/series` |
+| Sonarr | `/api/v3/release` (with `seriesId=&seasonNumber=`) |
 
 That is the complete list — the bot calls nothing else, so anything else
 arriving at the proxy is worth a look rather than a rule. `radarr_url` and
@@ -356,8 +392,8 @@ default is shorter than the search takes.** That call fans out to every
 indexer: measured on 2026-09-22, a movie's first search took **23 s** and a
 repeat of it, answered from Radarr's cache, **2.3 s**. The bot gives that one
 path **120 s** — every other call keeps 20 s — so nginx needs
-`proxy_read_timeout 120s;` on the `/api/v3/release` location, and other
-proxies their equivalent. Leave it at the usual 60 s and the search is cut
+`proxy_read_timeout 120s;` on both `/api/v3/release` locations (Radarr's and
+Sonarr's), and other proxies their equivalent. Leave it at the usual 60 s and the search is cut
 off at the proxy on exactly the films that were hardest to find, which is
 the opposite of what it is for.
 
