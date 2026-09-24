@@ -13,7 +13,33 @@ pub fn state_text(catalogue: &Catalogue, locale: Locale, state: &WishState) -> S
     match state {
         WishState::Available => catalogue.text(locale, "status.available", &[]),
         WishState::NotHandedOver => catalogue.text(locale, "status.not_handed_over", &[]),
-        WishState::PartlyAvailable => catalogue.text(locale, "status.partly_available", &[]),
+        WishState::Declined => catalogue.text(locale, "status.declined", &[]),
+        WishState::PartlyAvailable { counts: None } => {
+            catalogue.text(locale, "status.partly_available", &[])
+        }
+        WishState::PartlyAvailable {
+            counts: Some(counts),
+        } => match counts.next {
+            Some(next) if counts.have == counts.aired => catalogue.text(
+                locale,
+                "status.partly_complete_next",
+                &[("date", &render_date(locale, next))],
+            ),
+            _ => catalogue.text(
+                locale,
+                "status.partly_counts",
+                &[
+                    ("have", &counts.have.to_string()),
+                    ("aired", &counts.aired.to_string()),
+                ],
+            ),
+        },
+        WishState::NotAired { date: None } => catalogue.text(locale, "status.not_aired", &[]),
+        WishState::NotAired { date: Some(date) } => catalogue.text(
+            locale,
+            "status.not_aired_date",
+            &[("date", &render_date(locale, *date))],
+        ),
         WishState::Waiting => catalogue.text(locale, "status.waiting", &[]),
         WishState::ImportStuck => catalogue.text(locale, "status.import_stuck", &[]),
         WishState::Downloading { percent } => catalogue.text(
@@ -87,6 +113,7 @@ fn render_date(locale: Locale, date: time::Date) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::PartCounts;
 
     #[test]
     fn a_release_date_is_rendered_the_way_each_language_writes_one() {
@@ -127,7 +154,26 @@ mod tests {
         let states = [
             WishState::Available,
             WishState::NotHandedOver,
-            WishState::PartlyAvailable,
+            WishState::Declined,
+            WishState::PartlyAvailable { counts: None },
+            WishState::PartlyAvailable {
+                counts: Some(PartCounts {
+                    have: 3,
+                    aired: 5,
+                    next: None,
+                }),
+            },
+            WishState::PartlyAvailable {
+                counts: Some(PartCounts {
+                    have: 5,
+                    aired: 5,
+                    next: Some(time::macros::date!(2026 - 10 - 03)),
+                }),
+            },
+            WishState::NotAired { date: None },
+            WishState::NotAired {
+                date: Some(time::macros::date!(2026 - 10 - 03)),
+            },
             WishState::Waiting,
             WishState::ImportStuck,
             WishState::Downloading { percent: 40 },

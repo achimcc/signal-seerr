@@ -217,6 +217,7 @@ fn movie_wish(id: i64) -> Wish {
         profile_name: Some(PROFILE.to_string()),
         requested_by: Some("robert".to_string()),
         download_percent: None,
+        seasons: Vec::new(),
     }
 }
 

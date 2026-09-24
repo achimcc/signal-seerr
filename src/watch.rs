@@ -288,6 +288,7 @@ impl Watcher {
             wish,
             &Evidence {
                 movie: movie.as_ref(),
+                series: None,
                 queue_item,
                 last_event,
                 known_reason: reason.as_ref(),

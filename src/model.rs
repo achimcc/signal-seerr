@@ -74,6 +74,10 @@ pub struct Wish {
     /// queue -- the only download evidence available where no `[insight]`
     /// is configured at all.
     pub download_percent: Option<u8>,
+    /// The seasons asked for, from `seasons[].seasonNumber` on a tv request
+    /// (recorded 2026-09-24, `seerr-request-all.json`). Empty for a movie --
+    /// and, on a series, empty means every monitored season counts.
+    pub seasons: Vec<u16>,
 }
 
 /// Why a wish's search never found a suitable release. Comes only from
@@ -96,15 +100,31 @@ pub enum Reason {
 #[derive(Clone, Debug, PartialEq)]
 pub enum WishState {
     Available,
+    /// Seerr's MediaRequestStatus 3: somebody with the right to do so said
+    /// no. Nothing was handed over, nothing is searched, nothing is told
+    /// unasked -- the person was told by whoever declined it.
+    Declined,
     NotHandedOver,
-    /// Seerr's MediaStatus 4: some of it is there, the rest is not. Only a
-    /// series can be in this state.
-    PartlyAvailable,
+    /// Some of it is there, the rest is not: Seerr's MediaStatus 4, or --
+    /// with episode evidence -- a series where every aired episode that
+    /// counts is on file but more are to come, or where some are on file
+    /// and some are missing. Only a series can be in this state. `counts`
+    /// is `None` where no episodes were read.
+    PartlyAvailable {
+        counts: Option<PartCounts>,
+    },
     ImportStuck,
     Downloading {
         percent: u8,
     },
     NotReleased {
+        date: Option<time::Date>,
+    },
+    /// A series none of whose counting episodes has aired yet; `date` is
+    /// the first air date still ahead, if Sonarr knows one. Its own variant
+    /// and not `NotReleased`, because a person is told something else
+    /// ("not aired yet", not "not out for home viewing").
+    NotAired {
         date: Option<time::Date>,
     },
     DownloadFailed,
@@ -122,18 +142,32 @@ pub enum WishState {
     Waiting,
 }
 
+/// How much of a series is there, counted over the episodes that count
+/// (wished season, monitored, aired). `next` is the first air date still
+/// ahead, if any.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PartCounts {
+    pub have: u32,
+    pub aired: u32,
+    pub next: Option<time::Date>,
+}
+
 impl WishState {
     /// The key under which "already told" is remembered; None = never
     /// announced unasked.
     ///
-    /// `Waiting` and `PartlyAvailable` are None on purpose: the first has no
-    /// measurement behind it (see the variant), and the second is not a
-    /// problem -- part of the series is there and the rest is on its way.
+    /// `Waiting`, `PartlyAvailable`, `NotAired`, `NotReleased` and `Declined`
+    /// are None on purpose: the first has no measurement behind it (see the
+    /// variant), the next three are not a problem, and the last was already
+    /// said by whoever declined. `NotHandedOver` HAS a class -- but the
+    /// watcher only reaches it after its own retry (see `watch.rs`); the
+    /// class alone does not make a first failure a notice.
     pub fn notice_class(&self) -> Option<&'static str> {
         match self {
             WishState::Searching | WishState::Unsuitable(_) => Some("unsuitable"),
             WishState::DownloadFailed => Some("download_failed"),
             WishState::ImportStuck => Some("import_stuck"),
+            WishState::NotHandedOver => Some("not_handed_over"),
             _ => None,
         }
     }
@@ -152,7 +186,10 @@ mod tests {
     #[test]
     fn the_two_states_without_film_evidence_are_never_announced_unasked() {
         assert_eq!(WishState::Waiting.notice_class(), None);
-        assert_eq!(WishState::PartlyAvailable.notice_class(), None);
+        assert_eq!(
+            WishState::PartlyAvailable { counts: None }.notice_class(),
+            None
+        );
     }
 
     #[test]

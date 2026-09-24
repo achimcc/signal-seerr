@@ -135,6 +135,16 @@ fn wish_from(r: &serde_json::Value) -> Option<Wish> {
             .and_then(|v| v.as_str())
             .map(str::to_string),
         download_percent: download_percent_from(media),
+        seasons: r
+            .get("seasons")
+            .and_then(|v| v.as_array())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|season| season.get("seasonNumber")?.as_u64())
+                    .filter_map(|n| u16::try_from(n).ok())
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -627,6 +637,7 @@ mod arc_requests_tests {
                 profile_name: None,
                 requested_by: Some("canned-requester".into()),
                 download_percent: None,
+                seasons: Vec::new(),
             }])
         }
         async fn open_wishes(&self) -> Result<Vec<Wish>> {

@@ -797,6 +797,7 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
 
         let evidence = Evidence {
             movie: movie.as_ref(),
+            series: None,
             queue_item: item.as_ref(),
             last_event,
             known_reason,
@@ -832,7 +833,11 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         } else if let Some(percent) = wish.download_percent {
             state_text(&self.catalogue, locale, &WishState::Downloading { percent })
         } else if wish.media_status == 4 {
-            state_text(&self.catalogue, locale, &WishState::PartlyAvailable)
+            state_text(
+                &self.catalogue,
+                locale,
+                &WishState::PartlyAvailable { counts: None },
+            )
         } else {
             // `WishState::Waiting` renders `status.waiting`: the same words
             // this branch used to reach for directly, now from the one

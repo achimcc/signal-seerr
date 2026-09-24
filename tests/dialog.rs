@@ -641,6 +641,7 @@ async fn status_lists_what_is_still_on_its_way() {
                 profile_name: None,
                 requested_by: None,
                 download_percent: None,
+                seasons: Vec::new(),
             }])
         }
         async fn open_wishes(&self) -> anyhow::Result<Vec<Wish>> {
@@ -1192,6 +1193,7 @@ fn wish(id: i64, arr_id: Option<i64>) -> Wish {
         profile_name: None,
         requested_by: None,
         download_percent: None,
+        seasons: Vec::new(),
     }
 }
 
