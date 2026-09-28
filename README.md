@@ -43,6 +43,21 @@ Signal ⇄ signal-cli (JSON-RPC, unix socket) ⇄ signal-seerr ⇄ Seerr (REST +
   could stand in here in principle, but the code speaks Authentik's API
   today — see `src/directory/mod.rs`.
 
+## The sieve in front of signal-cli (`signal-sieb`)
+
+signal-cli's JSON-RPC socket offers every command of the account on one line
+protocol — not only `send` and `getUserStatus`, which is all the bot calls, but
+also `addDevice`, `unregister`, `setPin`, `startChangeNumber` and
+`updateAccount`. Whoever can open that socket can link a device of their own to
+the bot's account; that outlives every repair of the bot.
+
+`signal-sieb LISTEN UPSTREAM` sits in between: it alone may open signal-cli's
+socket, the bot connects to LISTEN, and only `send` and `getUserStatus` reach
+signal-cli. Any other request is answered with a JSON-RPC error (`-32601`) and
+never forwarded; what signal-cli sends back (answers, `receive` notifications)
+passes unchanged. Point `signal_socket` at LISTEN, give the sieve — not the
+bot — the group that may open signal-cli's socket.
+
 ## What you need before you start
 
 1. **A Seerr instance** you already use, with an **administrator** API key

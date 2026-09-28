@@ -1,4 +1,5 @@
 pub mod rpc;
+pub mod sieb;
 
 use crate::model::Aci;
 use anyhow::{anyhow, Context, Result};
@@ -134,19 +135,6 @@ impl SignalClient {
             )
             .await?;
         Ok(aci_from_user_status(&answer))
-    }
-
-    /// Sets the bot's own username, so nobody sees the server's phone number.
-    /// Returns the full name including the discriminator signal assigns.
-    pub async fn set_username(&self, username: &str) -> Result<String> {
-        let answer = self
-            .call("updateAccount", serde_json::json!({ "username": username }))
-            .await?;
-        Ok(answer
-            .get("username")
-            .and_then(|v| v.as_str())
-            .unwrap_or(username)
-            .to_string())
     }
 }
 
