@@ -2,7 +2,11 @@ use anyhow::{Context, Result};
 use signal_seerr::arr::{ArrClient, Insight, ReleaseSearch};
 use signal_seerr::config::{Config, InsightConfig, Secrets};
 use signal_seerr::dialog::Dialog;
-use signal_seerr::directory::{apply, diff::plan, AuthentikClient, Directory, Member};
+use signal_seerr::directory::{
+    apply,
+    diff::{hold_back_mass_removal, plan},
+    AuthentikClient, Directory, Member,
+};
 use signal_seerr::i18n::Catalogue;
 use signal_seerr::model::Aci;
 use signal_seerr::notices::Notices;
@@ -303,8 +307,23 @@ async fn main() -> Result<()> {
                     guard.clone()
                 };
 
-                let changes = plan(&working, &users);
-                if changes.is_empty() {
+                let (changes, held) =
+                    hold_back_mass_removal(plan(&working, &users), config.max_removed_per_pass);
+                if held > 0 {
+                    // Every pass, not once: this is the bot refusing to act
+                    // on what its directory says, and it stays that way
+                    // until somebody looks.
+                    tracing::error!(
+                        held,
+                        limit = config.max_removed_per_pass,
+                        "more people would leave at once than max_removed_per_pass allows -- \
+                         nobody is said goodbye to or forgotten this pass"
+                    );
+                }
+                // A pass with no changes still has work when a conflict was
+                // reported: it has gone away, and `apply` forgets it, so a
+                // return of the same conflict is told again.
+                if changes.is_empty() && !working.has_reported_conflicts() {
                     continue;
                 }
 

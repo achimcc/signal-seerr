@@ -17,6 +17,12 @@ pub struct Config {
     pub webhook_token_file: PathBuf,
     pub state_file: PathBuf,
     pub poll_seconds: u64,
+    /// How many people may leave in one pass of the reconciler before the
+    /// pass holds every departure back instead (Audit 3, B128). More at
+    /// once is a directory that answered wrong far more often than a real
+    /// wave of goodbyes; raise it for the one pass that really is one.
+    #[serde(default = "default_max_removed_per_pass")]
+    pub max_removed_per_pass: usize,
     pub media_group: String,
     pub jellyfin_url: String,
     /// Where a person goes to enter their Signal name -- substituted into
@@ -50,6 +56,10 @@ pub struct Config {
     /// there too. Optional; without it the bot behaves as before.
     #[serde(default)]
     pub treff: Option<TreffConfig>,
+}
+
+fn default_max_removed_per_pass() -> usize {
+    2
 }
 
 /// Where treff takes events, and the token for it.
@@ -107,6 +117,7 @@ impl Config {
             webhook_token_file: "/dev/null".into(),
             state_file: "/tmp/state.json".into(),
             poll_seconds: 30,
+            max_removed_per_pass: 2,
             media_group: "Medien".into(),
             jellyfin_url: "https://example.invalid".into(),
             settings_url: "https://example.invalid/account".into(),

@@ -68,6 +68,12 @@ pub struct Entry {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct State {
     entries: Vec<Entry>,
+    /// The conflicts somebody has already been told about, as (Authentik
+    /// username, Signal name in lower case). Persisted so a restart does not
+    /// tell them again; absent in files written before it existed (Audit 3,
+    /// B126), which read as "nobody told yet".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reported_conflicts: Vec<(String, String)>,
 }
 
 impl State {
@@ -128,6 +134,32 @@ impl State {
 
     pub fn iter(&self) -> impl Iterator<Item = &Entry> {
         self.entries.iter()
+    }
+
+    pub fn conflict_reported(&self, username: &str, signal_username: &str) -> bool {
+        let key = (username.to_string(), signal_username.to_lowercase());
+        self.reported_conflicts.contains(&key)
+    }
+
+    pub fn mark_conflict_reported(&mut self, username: &str, signal_username: &str) {
+        if !self.conflict_reported(username, signal_username) {
+            self.reported_conflicts
+                .push((username.to_string(), signal_username.to_lowercase()));
+        }
+    }
+
+    /// Forgets every reported conflict `still` does not name -- a conflict
+    /// that went away and comes back is a new one, and is told again.
+    pub fn keep_reported_conflicts(&mut self, still: &[(String, String)]) {
+        self.reported_conflicts.retain(|(user, name)| {
+            still
+                .iter()
+                .any(|(u, n)| u == user && n.eq_ignore_ascii_case(name))
+        });
+    }
+
+    pub fn has_reported_conflicts(&self) -> bool {
+        !self.reported_conflicts.is_empty()
     }
 }
 

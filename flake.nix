@@ -77,6 +77,13 @@
           buildPhase = "cargo fmt --check";
           installPhase = "touch $out";
         });
+        # The unit's sandbox, read off the rendered unit file (Audit 3,
+        # B129). Evaluation only, so it is cheap next to `vm`.
+        hardening = import ./nix/hardening.nix {
+          inherit pkgs;
+          module = self.nixosModules.default;
+          package = self.packages.${pkgs.system}.default;
+        };
         vm = import ./nix/test.nix {
           inherit pkgs;
           module = self.nixosModules.default;

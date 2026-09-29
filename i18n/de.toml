@@ -4,6 +4,9 @@ title = "Hallo {name} — ab jetzt kannst du dir hier Filme und Serien wünschen
 [farewell]
 goodbye = "Ich habe deinen Signal-Namen vergessen — trag ihn in deinen Kontoeinstellungen wieder ein, wenn du wieder Filme und Serien wünschen möchtest."
 
+[conflict]
+notice = "Das Konto „{claimant}“ hat deinen Signal-Namen {signal} eingetragen. Hier gehört er schon zum Konto „{holder}“, und dabei bleibt es. Ist „{holder}“ nicht dein Konto, sag bitte dem Betreiber dieses Servers Bescheid."
+
 [help]
 body = """
 Schreib mir einfach einen Titel, dann suche ich.
@@ -106,3 +109,4 @@ unknown_sender = "Ich kenne dich noch nicht. Trag deinen Signal-Namen auf {url} 
 not_allowed = "Dein Konto kenne ich, aber es fehlt die Gruppe für die Mediathek. Sag {operator} Bescheid."
 seerr_down = "Ich komme gerade nicht an die Wunschliste. Versuch es gleich noch einmal."
 not_understood = "Damit kann ich nichts anfangen. /hilfe zeigt, was geht."
+slow_down = "Langsamer, bitte — ich komme nicht hinterher. Gleich geht es weiter."

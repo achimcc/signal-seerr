@@ -20,6 +20,11 @@ pub trait Messenger: Send + Sync {
     async fn send(&self, to: &Aci, text: &str) -> Result<()>;
 }
 
+/// How many incoming messages wait for the dialog before the next one is
+/// dropped. The dialog handles one message at a time and answers it before it
+/// takes the next, so a queue this long is minutes of ordinary chat.
+pub const INCOMING_QUEUE: usize = 64;
+
 type Pending = Arc<Mutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, String>>>>>;
 
 pub struct SignalClient {
@@ -27,6 +32,8 @@ pub struct SignalClient {
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     pending: Pending,
     next_id: AtomicU64,
+    /// Incoming messages dropped because the dialog's queue was full.
+    dropped: Arc<AtomicU64>,
 }
 
 impl SignalClient {
@@ -40,13 +47,15 @@ impl SignalClient {
         let (read_half, write_half) = stream.into_split();
 
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
-        let (tx, rx) = mpsc::channel(64);
+        let (tx, rx) = mpsc::channel(INCOMING_QUEUE);
+        let dropped = Arc::new(AtomicU64::new(0));
 
         let client = Arc::new(SignalClient {
             account: account.to_string(),
             writer: Arc::new(Mutex::new(write_half)),
             pending: pending.clone(),
             next_id: AtomicU64::new(1),
+            dropped: dropped.clone(),
         });
 
         tokio::spawn(async move {
@@ -59,10 +68,27 @@ impl SignalClient {
                         }
                     }
                     Ok(Frame::Notification { note }) => {
-                        if let Some(incoming) = note.into_incoming() {
-                            if tx.send(incoming).await.is_err() {
-                                break;
+                        let Some(incoming) = note.into_incoming() else {
+                            continue;
+                        };
+                        // NEVER an awaiting `send` (Audit 3, B124). This task
+                        // also routes the responses to `call()`, and the
+                        // dialog waits in `call()` for its reply to go out --
+                        // so a reader waiting on the dialog is a deadlock
+                        // that only the 30s timeout breaks, for every reply,
+                        // for as long as somebody keeps writing. What does
+                        // not fit is dropped and counted; the dialog's queue
+                        // is the only buffer, and it is bounded.
+                        match tx.try_send(incoming) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                let total = dropped.fetch_add(1, Ordering::Relaxed) + 1;
+                                tracing::warn!(
+                                    dropped = total,
+                                    "the dialog is behind, an incoming message was dropped"
+                                );
                             }
+                            Err(mpsc::error::TrySendError::Closed(_)) => break,
                         }
                     }
                     Ok(Frame::Other) => tracing::debug!("unmodelled frame"),
@@ -73,6 +99,12 @@ impl SignalClient {
         });
 
         Ok((client, rx))
+    }
+
+    /// How many incoming messages were dropped so far because the dialog's
+    /// queue was full.
+    pub fn dropped_incoming(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
     }
 
     /// `params` must be a JSON object. The account gets merged into it below
@@ -223,6 +255,72 @@ mod tests {
         );
 
         accept_task.abort();
+    }
+
+    /// Audit 3, B124 (B2-SS-2). The reader routes both the responses to
+    /// `call()` and the incoming messages, and it used to hand an incoming
+    /// message over with an awaiting `send` -- so once the dialog stopped
+    /// reading (it is itself waiting in `call()` for a reply to go out), a
+    /// full channel stopped the reader, the response queued up behind the
+    /// notifications never got routed, and every reply ran into the 30s
+    /// timeout. A flood from one sender was enough.
+    ///
+    /// Nobody reads `rx` here, on purpose: that is the dialog being busy.
+    #[tokio::test]
+    async fn a_flood_of_incoming_messages_does_not_stall_a_response() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("signal-cli.sock");
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let server_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read_half, mut write_half) = stream.into_split();
+            let mut lines = BufReader::new(read_half).lines();
+            let request_line = lines.next_line().await.unwrap().unwrap();
+            let request: serde_json::Value = serde_json::from_str(&request_line).unwrap();
+            let id = request["id"].as_str().unwrap().to_string();
+
+            let mut burst = String::new();
+            for n in 0..(INCOMING_QUEUE * 3) {
+                let note = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "receive",
+                    "params": {
+                        "envelope": {
+                            "sourceUuid": "aaaa-bbbb",
+                            "dataMessage": { "message": format!("flood {n}") }
+                        },
+                        "account": "+490000"
+                    }
+                });
+                burst.push_str(&format!("{note}\n"));
+            }
+            let response = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": {} });
+            burst.push_str(&format!("{response}\n"));
+            write_half.write_all(burst.as_bytes()).await.unwrap();
+            // Hold the connection open: a closed socket would end the reader
+            // for a different reason than the one under test.
+            std::future::pending::<()>().await;
+        });
+
+        let (client, rx) = SignalClient::connect(&socket_path, "+490000")
+            .await
+            .unwrap();
+
+        let answer = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.call("send", serde_json::json!({})),
+        )
+        .await;
+        assert!(
+            matches!(answer, Ok(Ok(_))),
+            "the response must get through the flood, got {answer:?}"
+        );
+        // What did not fit was dropped, and counted -- not silently lost.
+        assert_eq!(rx.len(), INCOMING_QUEUE);
+        assert_eq!(client.dropped_incoming(), (INCOMING_QUEUE * 2) as u64);
+
+        server_task.abort();
     }
 
     #[tokio::test]

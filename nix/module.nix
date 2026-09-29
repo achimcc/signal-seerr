@@ -21,6 +21,33 @@ in
       '';
     };
 
+    allowedAddresses = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "10.0.1.10" "10.0.2.20" ];
+      description = ''
+        The only IP addresses this service may exchange packets with, in
+        either direction (`IPAddressAllow`, with `IPAddressDeny = any`):
+        Authentik, Seerr, the *arr and treff endpoints from `settings` --
+        and whatever sends the Seerr webhook, since the filter holds for
+        incoming connections too. Its signal-cli socket is AF_UNIX and not
+        affected. Empty (the default) means no address filter at all; the
+        module cannot know the addresses of a deployment, and a wrong guess
+        would cut the bot off silently.
+      '';
+    };
+
+    memoryMax = lib.mkOption {
+      type = lib.types.str;
+      default = "256M";
+      description = ''
+        `MemoryMax` of the unit. The bot keeps a handful of conversations
+        and one mapping table; the bound is there so that something that
+        grows without end -- a flood, a leak -- ends in a restart instead of
+        taking the machine with it.
+      '';
+    };
+
     extraServiceConfig = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
       default = { };
@@ -62,13 +89,16 @@ in
       }
     ];
 
-    # Deliberately NOT a hardened unit with its own mount namespace beyond
-    # what is listed here. A sandboxing option that gives a unit its own
-    # mount or network namespace (several of the Protect* family do) can
-    # break something that looks completely unrelated, and break it
-    # silently -- systemd reports the unit as healthy regardless. Add one
-    # only after checking, on the running service, that nothing it actually
-    # needs lives outside what that namespace still allows.
+    # A sandboxing option that gives a unit its own mount or network
+    # namespace can break something that looks completely unrelated, and
+    # break it silently -- systemd reports the unit as healthy regardless.
+    # What the bot needs from outside is small and known, and each option
+    # below leaves it in place: the signal-cli socket (AF_UNIX, connecting
+    # needs no write access to the file system it lives on), its
+    # StateDirectory (writable under `ProtectSystem = "strict"` by
+    # systemd's own doing), TCP to the addresses in `settings`, and the
+    # webhook port. It sets no private network namespace: the bot's traffic
+    # is exactly what it is for. `nix/test.nix` boots it under all of this.
     systemd.services.signal-seerr = {
       description = "Signal bot for Seerr requests";
       after = [ "network-online.target" "signal-cli.service" ];
@@ -118,13 +148,52 @@ in
         # experiment: a file placed in the directory before a restart is
         # gone immediately after.
 
+        # Audit 3, B129: the unit had no bounding set, no address filter, no
+        # memory bound, UMask 0022 and an empty SystemCallArchitectures.
+        # The set below follows the sandbox of the deployment it runs in
+        # (homeserver, `lib/dienst-sandbox.nix`) and holds for any other.
         NoNewPrivileges = true;
+        # EMPTY, not a list: the bot needs no capability at all (its own
+        # user, a port above 1024). And several lines of this key do not
+        # combine the way a single one reads.
+        CapabilityBoundingSet = "";
+        AmbientCapabilities = "";
         PrivateTmp = true;
+        PrivateDevices = true;
         ProtectSystem = "strict";
+        ProtectHome = true;
         ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        ProtectProc = "invisible";
+        ProcSubset = "pid";
+        RestrictNamespaces = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+        # Rust, no JIT: nothing here needs memory that is both writable and
+        # executable.
+        MemoryDenyWriteExecute = true;
+        # AF_UNIX for the signal-cli socket, AF_INET(6) for Authentik, Seerr,
+        # the *arr, treff and the webhook listener. Nothing else.
         RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
-        SystemCallFilter = [ "@system-service" ];
-      } // cfg.extraServiceConfig;
+        SystemCallArchitectures = "native";
+        SystemCallFilter = [ "@system-service" "~@privileged" "~@resources" ];
+        # EPERM rather than a kill: a forbidden call fails like any call
+        # without the right, instead of taking the process down with it.
+        SystemCallErrorNumber = "EPERM";
+        # state.json and notices.json are nobody else's business.
+        UMask = "0077";
+        MemoryMax = cfg.memoryMax;
+      }
+      // lib.optionalAttrs (cfg.allowedAddresses != [ ]) {
+        IPAddressAllow = cfg.allowedAddresses;
+        IPAddressDeny = "any";
+      }
+      // cfg.extraServiceConfig;
     };
   };
 }

@@ -1,7 +1,7 @@
 # Recorded answers
 
 Every file here is what a running Seerr 3.2.0 / Radarr / Sonarr instance actually sent
-on **2026-09-21** or **2026-09-24** (one exception, named below), not what somebody believed it sends. They exist because of
+on **2026-09-21** or **2026-09-24** (two exceptions, named below), not what somebody believed it sends. They exist because of
 one expensive lesson: Seerr sends `request_id` as a *string*, every test in
 this repository built it as a *number*, and all of them agreed with each other
 and none with reality. It happened a second time with `media.title`, which
@@ -43,6 +43,7 @@ and none with reality. It happened a second time with `media.title`, which
 | `sonarr-history-series.json` | `GET /api/v3/history/series?seriesId=1` (2026-09-24), the newest 20 of 2693 entries | everything except `date`, `eventType`, `seriesId`, `episodeId`, `data.reason` |
 | `sonarr-queue-empty.json` | `GET /api/v3/queue?pageSize=200&includeSeries=false` (2026-09-24), nothing downloading | — |
 | `sonarr-release-season-all-rejected.json` | `GET /api/v3/release?seriesId=1&seasonNumber=1` (2026-09-24) — **an interactive season search at every indexer; recorded once**. 80 of 662 entries, chosen to keep the mix: all 29 whose rejection names another series, 10 `Unknown Series`, 41 carrying `German`, 10 `is not wanted in profile` | as the Radarr release file; **the series titles inside the `… matches an alias for series with TVDB ID: N` sentences were replaced by `Series X` and the id by `0`** |
+| `signal-cli-receive-group.synthesised.json` | **not a recording.** A `receive` notification from signal-cli's JSON-RPC socket for a message sent into a group the bot is a member of. The field names come from the classes of the deployed signal-cli 0.14.6 (`org/asamk/signal/json/JsonDataMessage` carries `groupInfo`, `JsonGroupInfo` carries `groupId`, `groupName`, `revision`, `type`), read out of `signal-cli-0.14.6.jar`; there is no second number to send a real group message from. The first recorded group message replaces this file | — |
 | `radarr-queue-import-blocked.synthesised.json` | **not a recording.** `radarr-queue-downloading.json` with exactly one value changed: `trackedDownloadState` from `downloading` to `importBlocked`. The value comes from the source of the deployed versions (`src/NzbDrone.Core/Download/TrackedDownloads/TrackedDownload.cs`, Radarr v6.4.4.10685 and Sonarr v4.0.20.3014, identical enums: `downloading, importBlocked, importPending, importing, imported, failedPending, failed, ignored`). The first real stuck import that is seen replaces this file | — |
 
 **Which free-text rejection sentences are backed by a recording, per service.**
@@ -57,5 +58,5 @@ two things Radarr's never did: releases that belong to another series
 language names `Unknown` and `Original` -- both handled in `reason_from`, both
 pinned by a test over this file.
 
-**The one synthesised file** is named so (`*.synthesised.json`) and explained
+**The two synthesised files** are named so (`*.synthesised.json`) and explained
 in the table. Nothing else here was built by hand.

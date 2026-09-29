@@ -36,14 +36,26 @@ pub struct Envelope {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DataMessage {
     pub message: Option<String>,
+    /// Present on every message sent into a group (signal-cli 0.14.6,
+    /// `JsonDataMessage.groupInfo`). Only its presence matters here, so its
+    /// contents are not modelled.
+    pub group_info: Option<serde_json::Value>,
 }
 
 impl Notification {
     pub fn into_incoming(self) -> Option<Incoming> {
         let from = Aci(self.envelope.source_uuid?);
-        let text = self.envelope.data_message?.message?;
+        let data = self.envelope.data_message?;
+        // No group chats (Audit 3, B125): the design has none, and a group
+        // message is said to the other people in it, not to the bot.
+        if data.group_info.is_some() {
+            tracing::debug!("a group message was dropped");
+            return None;
+        }
+        let text = data.message?;
         let text = text.trim();
         if text.is_empty() {
             return None;
@@ -157,6 +169,22 @@ mod tests {
         )
         .unwrap();
         assert!(note.into_incoming().is_none());
+    }
+
+    /// Audit 3, B125 (B2-SS-3). The bot is a one-to-one conversation. A
+    /// message into a group it sits in used to be taken as a message to the
+    /// bot -- "2" said to a friend there would pick hit number 2 out of an
+    /// open result list, in the sender's name.
+    #[test]
+    fn a_group_message_is_not_an_incoming_message() {
+        let line = include_str!("../../tests/fixtures/signal-cli-receive-group.synthesised.json");
+        let Frame::Notification { note } = parse_line(line).unwrap() else {
+            panic!("the recording is a receive notification");
+        };
+        assert!(
+            note.into_incoming().is_none(),
+            "a group message reached the dialog"
+        );
     }
 
     #[test]

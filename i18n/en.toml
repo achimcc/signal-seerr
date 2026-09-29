@@ -4,6 +4,9 @@ title = "Hi {name} — you can now request movies and series here."
 [farewell]
 goodbye = "I've forgotten your Signal name — enter it again in your account settings whenever you'd like to request movies and series again."
 
+[conflict]
+notice = "The account \"{claimant}\" entered your Signal name {signal}. Here it already belongs to the account \"{holder}\", and it stays that way. If \"{holder}\" is not your account, please tell whoever runs this server."
+
 [help]
 body = """
 Just send me a title and I'll search for it.
@@ -106,3 +109,4 @@ unknown_sender = "I don't know you yet. Add your Signal name at {url} under \"Yo
 not_allowed = "I know your account, but it's missing the group for the media library. Let {operator} know."
 seerr_down = "I can't reach the request list right now. Try again in a moment."
 not_understood = "I can't do anything with that. /help shows what's possible."
+slow_down = "Slower, please — I can't keep up. Try again in a moment."

@@ -262,6 +262,22 @@ async fn an_unknown_sender_is_told_where_to_go_and_then_left_alone() {
     assert!(second.is_empty(), "answered a stranger twice: {second:?}");
 }
 
+/// Audit 3, B125: strangers are answered once an hour and otherwise
+/// ignored -- but they are COUNTED, answered or not, so a wave of them shows.
+#[tokio::test]
+async fn every_message_from_a_stranger_is_counted() {
+    let mut d = dialog(FakeSeerr::default(), false);
+    d.handle(&Aci("zzzz".into()), "hallo").await;
+    d.handle(&Aci("zzzz".into()), "hallo?").await;
+    d.handle(&Aci("yyyy".into()), "hi").await;
+    assert_eq!(d.strangers_heard(), 3);
+
+    // A member is not a stranger.
+    let mut d = dialog(FakeSeerr::default(), true);
+    d.handle(&Aci("aaaa".into()), "/hilfe").await;
+    assert_eq!(d.strangers_heard(), 0);
+}
+
 #[tokio::test]
 async fn a_known_account_without_the_media_group_gets_a_different_sentence() {
     let aci = Aci("aaaa".into());
@@ -1595,4 +1611,76 @@ async fn status_calls_a_declined_wish_declined_without_asking_anybody() {
     );
     assert!(insight.movie_calls.lock().unwrap().is_empty());
     assert!(insight.queue_calls.lock().unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Audit 3, B127 (B2-SS-5): limits. The parser was already robust; what was
+// missing were bounds -- on how fast one member may write, on how long a
+// search reaching Seerr may be, and on the seasons list.
+// ---------------------------------------------------------------------------
+
+/// Ten messages in a burst go through; the eleventh gets one "slow down",
+/// and after that the bot says nothing until the bucket has refilled.
+/// Without a limit, one member can drive Seerr and TMDB as fast as they can
+/// type -- and push Signal into rate-limiting the bot's account for everyone.
+#[tokio::test]
+async fn a_member_writing_too_fast_is_told_once_and_then_ignored() {
+    let mut d = dialog(FakeSeerr::default(), true);
+    let aci = Aci("aaaa".into());
+    for n in 0..10 {
+        let out = d.handle(&aci, &format!("film {n}")).await;
+        assert_eq!(out.len(), 1, "message {n} was not answered");
+    }
+    let slow = d.handle(&aci, "film 10").await;
+    assert_eq!(
+        slow.len(),
+        1,
+        "the first message over the limit gets one answer"
+    );
+    let quiet = d.handle(&aci, "film 11").await;
+    assert!(quiet.is_empty(), "answered again over the limit: {quiet:?}");
+    assert_eq!(
+        d.seerr_ref().queries.lock().unwrap().len(),
+        10,
+        "only the messages within the limit may reach Seerr"
+    );
+}
+
+/// A search reaches Seerr with at most 200 characters, and without the
+/// invisible formatting characters (zero-width, bidi overrides) that change
+/// nothing a person can see but everything a search compares.
+#[tokio::test]
+async fn a_search_reaches_seerr_short_and_without_invisible_characters() {
+    let mut d = dialog(FakeSeerr::default(), true);
+    let aci = Aci("aaaa".into());
+    d.handle(&aci, &"x".repeat(60_000)).await;
+    d.handle(&aci, "du\u{200B}ne\u{202E}\u{FEFF}").await;
+    let queries = d.seerr_ref().queries.lock().unwrap().clone();
+    assert_eq!(queries.len(), 2);
+    assert!(
+        queries[0].chars().count() <= 200,
+        "a query of {} characters reached Seerr",
+        queries[0].chars().count()
+    );
+    assert_eq!(queries[1], "dune");
+}
+
+/// A message of nothing but invisible characters is not a search at all.
+#[tokio::test]
+async fn a_message_of_only_invisible_characters_does_not_reach_seerr() {
+    let mut d = dialog(FakeSeerr::default(), true);
+    let out = d.handle(&Aci("aaaa".into()), "\u{200B}\u{200D}").await;
+    assert_eq!(out.len(), 1);
+    assert!(d.seerr_ref().queries.lock().unwrap().is_empty());
+}
+
+/// "1 1 1 …" is season 1, once -- not a list Seerr is handed as given.
+#[tokio::test]
+async fn a_repeated_season_is_ordered_once() {
+    let (mut d, aci) = dialog_mid_seasons_question(3).await;
+    let answer = "3 1 ".repeat(40) + "1";
+    d.handle(&aci, &answer).await;
+    let list = placed(&d);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].1, Seasons::Only(vec![1, 3]));
 }

@@ -180,6 +180,24 @@ A field-by-field note on what is not obvious from the name:
 - `poll_seconds` is how often the Authentik directory is reconciled — a new
   member's greeting, and a removed member's goodbye, land within this
   window, not instantly.
+- `max_removed_per_pass` (default `2`) is how many people may leave in one
+  reconciliation. More at once is far more often a directory that answered
+  wrong — Authentik answers a token that lost its permission with an empty
+  list and a `200` — than a real wave of goodbyes, so the whole pass then
+  says goodbye to nobody and forgets nobody, and logs an error each time
+  until somebody looks. Raise it for the one pass that really is one. An
+  answer with no user at all is refused outright, and every page of the
+  user list is read.
+- Somebody entering a Signal name that another account already holds gets
+  nothing, on purpose — but the phone that owns the name is told once
+  which two accounts claim it, so a name taken first by the wrong person
+  does not just leave its owner with a bot that never answers.
+- Each person may send ten messages in a burst and ten a minute after
+  that; the first message over the limit gets one "slower, please", the
+  rest are ignored until the limit recovers. A message is read up to its
+  first 500 characters, a search goes to Seerr with at most 200 and
+  without invisible formatting characters. Group messages are ignored —
+  the bot only holds one-to-one conversations.
 
 Messages the bot sends live in `i18n/en.toml` and `i18n/de.toml`, chosen per
 person by their Authentik locale — there is no in-chat language switch. Add
@@ -195,8 +213,14 @@ cargo build --release
 
 signal-seerr waits (with a bound, not forever) for signal-cli's socket to
 appear, then runs until stopped. A NixOS module is included
-(`nix/module.nix`, exported as `nixosModules.default`) for anyone on NixOS;
-everyone else runs the binary under systemd, runit, or whatever else
+(`nix/module.nix`, exported as `nixosModules.default`) for anyone on NixOS:
+its unit runs without capabilities, with a system call filter and the
+usual `Protect*` sandbox, and two options of its own: `memoryMax`
+(default `256M`) and `allowedAddresses` — the IP addresses the bot may talk
+to (Authentik, Seerr, the *arr, treff) *and* be reached from (whoever sends
+the webhook); set, everything else is denied, left empty, there is no
+address filter. `nix build .#checks.x86_64-linux.hardening` reads the
+sandbox off the rendered unit. Everyone else runs the binary under systemd, runit, or whatever else
 supervises long-running processes on their system — there's nothing
 NixOS-specific about the binary itself.
 

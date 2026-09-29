@@ -146,6 +146,29 @@ pub fn plan(state: &State, users: &[AuthentikUser]) -> Vec<Change> {
     changes
 }
 
+/// Takes every `Removed` out of `changes` when there are more of them than
+/// `limit`, and says how many it took (Audit 3, B128).
+///
+/// All or nothing, not the first `limit` of them: which few of a mass
+/// removal are real is exactly what cannot be told apart from here. Held
+/// back means no farewell and nothing forgotten -- the same plan comes up on
+/// the next pass, and the caller says so loudly each time, until the
+/// directory answers right again or the operator raises the limit.
+pub fn hold_back_mass_removal(changes: Vec<Change>, limit: usize) -> (Vec<Change>, usize) {
+    let removed = changes
+        .iter()
+        .filter(|c| matches!(c, Change::Removed { .. }))
+        .count();
+    if removed <= limit {
+        return (changes, 0);
+    }
+    let kept = changes
+        .into_iter()
+        .filter(|c| !matches!(c, Change::Removed { .. }))
+        .collect();
+    (kept, removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,6 +194,31 @@ mod tests {
             locale: Locale::De,
             groups: vec!["Medien".into()],
         });
+    }
+
+    /// Audit 3, B128: more departures in one pass than the limit allows is
+    /// not a wave of goodbyes, it is a directory that answered wrong. All of
+    /// them are held back -- no farewell, nothing forgotten -- and counted.
+    #[test]
+    fn a_mass_removal_is_held_back() {
+        let removed = |name: &str| Change::Removed {
+            username: name.into(),
+            aci: Aci(name.into()),
+        };
+        let added = Change::Added {
+            username: "neu".into(),
+            signal_username: "neu.1".into(),
+        };
+        let changes = vec![removed("a"), added.clone(), removed("b"), removed("c")];
+        let (kept, held) = hold_back_mass_removal(changes, 2);
+        assert_eq!(kept, vec![added.clone()]);
+        assert_eq!(held, 3);
+
+        // Within the limit, nothing is held back.
+        let changes = vec![removed("a"), added.clone(), removed("b")];
+        let (kept, held) = hold_back_mass_removal(changes.clone(), 2);
+        assert_eq!(kept, changes);
+        assert_eq!(held, 0);
     }
 
     #[test]

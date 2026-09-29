@@ -61,12 +61,39 @@ impl Catalogue {
             tracing::warn!(key, "unknown i18n key");
             return key.to_string();
         };
-        let mut out = template.clone();
-        for (name, value) in args {
-            out = out.replace(&format!("{{{name}}}"), value);
-        }
-        out
+        substitute(template, args)
     }
+}
+
+/// Fills `{name}` placeholders in ONE pass over the template (Audit 3,
+/// B127). Replacing one name after the other would substitute into what an
+/// earlier round had put in: a title that reads `{url}` became the URL.
+/// A `{…}` that names no argument is kept as it stands.
+fn substitute(template: &str, args: &[(&str, &str)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let value = after.find('}').and_then(|close| {
+            let name = &after[..close];
+            args.iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| (*v, close))
+        });
+        match value {
+            Some((value, close)) => {
+                out.push_str(value);
+                rest = &after[close + 1..];
+            }
+            None => {
+                out.push('{');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// "greeting.title" from a nested TOML table.
@@ -124,6 +151,24 @@ mod tests {
         assert!(s.contains("Andor"), "got: {s}");
         assert!(s.contains("17"), "got: {s}");
         assert!(!s.contains('{'), "no placeholder may survive: {s}");
+    }
+
+    /// Audit 3, B127: substitution is ONE pass over the template. Replacing
+    /// one placeholder after the other let a value that itself contains
+    /// `{url}` -- a title, say -- be expanded by the next round.
+    #[test]
+    fn a_value_is_never_substituted_into_again() {
+        let c = Catalogue::load();
+        let s = c.text(Locale::De, "error.unknown_sender", &[("url", "{url}")]);
+        assert_eq!(s.matches("{url}").count(), 1, "got: {s}");
+
+        let s = c.text(
+            Locale::De,
+            "request.placed",
+            &[("title", "{id}"), ("id", "17")],
+        );
+        assert!(s.contains("{id}"), "the title was expanded: {s}");
+        assert!(s.contains("17"), "got: {s}");
     }
 
     #[test]

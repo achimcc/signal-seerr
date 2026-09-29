@@ -35,6 +35,10 @@ let
       enable = true;
       inherit package;
       settings = baseSettings // extraSettings;
+      # Everything the bot talks to here, and the webhook's sender, is
+      # loopback. With the filter on, every assertion below also says that
+      # the address filter does not cut off what the bot needs.
+      allowedAddresses = [ "127.0.0.1" ];
     };
 
     # A stand-in for signal-cli: the point of this test is the unit, the
@@ -173,6 +177,14 @@ pkgs.testers.runNixOSTest {
         "-H 'X-Webhook-Token: nope' -H 'content-type: application/json' "
         "-d '{\"notification_type\":\"TEST_NOTIFICATION\"}' "
         "http://127.0.0.1:8080/seerr) = 401"
+    )
+
+    # Audit 3, B129: no capability left in the bounding set, read off the
+    # running process, not off the unit file.
+    machine.succeed(
+        "test \"$(awk '/^CapBnd:/ {print $2}' "
+        "/proc/$(systemctl show -p MainPID --value signal-seerr.service)/status)\" "
+        "= 0000000000000000"
     )
 
     # Long enough to cover a full reconciler cycle (poll_seconds = 30) on

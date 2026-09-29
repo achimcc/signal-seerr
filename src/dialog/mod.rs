@@ -1,3 +1,4 @@
+mod limit;
 mod status;
 
 pub use status::state_text;
@@ -21,6 +22,49 @@ const PAGE: usize = 5;
 const RESULTS_LIVE: Duration = Duration::from_secs(600);
 /// How long a stranger is left alone after being told once.
 const STRANGER_QUIET: Duration = Duration::from_secs(3600);
+
+/// A message is cut to this many characters before anything else looks at
+/// it (Audit 3, B127). Every command, title and seasons answer fits many
+/// times over; signal-cli hands over far longer ones.
+const MAX_MESSAGE_CHARS: usize = 500;
+/// A search reaches Seerr with at most this many characters.
+const MAX_QUERY_CHARS: usize = 200;
+
+/// The first `max` characters of `text`, cut on a character boundary.
+fn cap(text: &str, max: usize) -> &str {
+    match text.char_indices().nth(max) {
+        Some((at, _)) => &text[..at],
+        None => text,
+    }
+}
+
+/// Unicode's format characters (category `Cf`) that turn up in chat text:
+/// soft hyphen, zero-width space/joiners, the bidi marks, embeddings,
+/// overrides and isolates, the word joiner and the BOM. They change nothing
+/// a person sees and everything a search compares. The list is the `Cf`
+/// characters of the Basic Multilingual Plane that input methods and copy &
+/// paste produce, not the whole category.
+fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{061C}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+    )
+}
+
+/// What of a search goes to Seerr: without invisible characters, trimmed,
+/// at most `MAX_QUERY_CHARS` long.
+fn clean_query(query: &str) -> String {
+    let visible: String = query.chars().filter(|c| !is_invisible(*c)).collect();
+    cap(visible.trim(), MAX_QUERY_CHARS).trim_end().to_string()
+}
 
 /// Strips a known command prefix (matched case-insensitively against
 /// `lowered`) and returns the ORIGINAL-case remainder, trimmed.
@@ -46,6 +90,15 @@ fn strip_command<'a>(text: &'a str, lowered: &str, prefixes: &[&str]) -> Option<
 /// this needs neither a real sleep nor a paused clock.
 fn prune_stale_strangers(told: &mut HashMap<Aci, Instant>, now: Instant) {
     told.retain(|_, at| now.duration_since(*at) < STRANGER_QUIET);
+}
+
+/// A short, stable stand-in for an ACI in the journal. Not a secret-keeping
+/// hash -- the point is only that the log does not carry the account id.
+fn pseudonym(aci: &Aci) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    aci.0.hash(&mut hasher);
+    format!("{:08x}", hasher.finish() >> 32)
 }
 
 /// How long something that has arrived still counts as news on `/status`.
@@ -158,6 +211,12 @@ pub struct Dialog<R: Requests, D: Directory> {
     clock: Option<OffsetDateTime>,
     conversations: HashMap<Aci, Conversation>,
     told_strangers: HashMap<Aci, Instant>,
+    /// How fast each member may write; see `limit.rs`.
+    limiter: limit::Limiter,
+    /// Every message from somebody not in the directory, answered or not.
+    /// A wave of them -- a spammer, somebody trying the number -- used to
+    /// leave no trace at all (Audit 3, B125).
+    strangers_heard: u64,
 }
 
 impl<R: Requests, D: Directory> Dialog<R, D> {
@@ -187,6 +246,8 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
             clock: None,
             conversations: HashMap::new(),
             told_strangers: HashMap::new(),
+            strangers_heard: 0,
+            limiter: limit::Limiter::default(),
         }
     }
 
@@ -205,6 +266,11 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
     /// The wall clock, unless a test fixed one.
     fn now(&self) -> OffsetDateTime {
         self.clock.unwrap_or_else(OffsetDateTime::now_utc)
+    }
+
+    /// How many messages came from somebody not in the directory so far.
+    pub fn strangers_heard(&self) -> u64 {
+        self.strangers_heard
     }
 
     /// Lets a test look at what got placed through the fake `Requests`
@@ -254,7 +320,15 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
             )];
         }
 
-        let text = text.trim();
+        match self.limiter.admit(from, Instant::now()) {
+            limit::Verdict::Pass => {}
+            limit::Verdict::SlowDown => {
+                return vec![self.catalogue.text(locale, "error.slow_down", &[])]
+            }
+            limit::Verdict::Silent => return vec![],
+        }
+
+        let text = cap(text, MAX_MESSAGE_CHARS).trim();
         let lowered = text.to_lowercase();
 
         // /abbruch and /hilfe are the only two ways OUT of a stuck
@@ -394,9 +468,14 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
                 // A season that does not exist would be accepted by Seerr and
                 // then sit in the list for ever, waiting for something that
                 // is never coming.
-                Some(list)
+                Some(mut list)
                     if !list.is_empty() && list.iter().all(|s| *s >= 1 && *s <= hit.seasons) =>
                 {
+                    // Each season once, in order (Audit 3, B127): "1 1 1 …"
+                    // used to go to Seerr as given. With every entry already
+                    // bounded by `hit.seasons`, so is the list.
+                    list.sort_unstable();
+                    list.dedup();
                     Seasons::Only(list)
                 }
                 _ => {
@@ -904,6 +983,7 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
 
     fn tell_stranger_once(&mut self, from: &Aci) -> Vec<String> {
         let now = Instant::now();
+        self.strangers_heard += 1;
         // `conversations` is bounded by the size of the household; this map
         // is not -- every wrong number that ever writes leaves an entry that
         // is refreshed but never otherwise removed. Prune opportunistically
@@ -915,6 +995,15 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
             }
         }
         self.told_strangers.insert(from.clone(), now);
+        // Once per stranger and hour, like the answer itself -- a line per
+        // message would hand a flood straight on to the journal. The ACI is
+        // hashed and shortened: enough to tell one stranger from many, not
+        // enough to be an address book.
+        tracing::info!(
+            stranger = %pseudonym(from),
+            heard = self.strangers_heard,
+            "a message from somebody not in the directory"
+        );
         // A stranger has no Authentik account and therefore no locale. German
         // is the house language; the English half of the sentence is in the
         // same string.
@@ -933,6 +1022,11 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         kind: Option<MediaKind>,
         page: u32,
     ) -> Vec<String> {
+        let query = clean_query(query);
+        if query.is_empty() {
+            return vec![self.catalogue.text(locale, "error.not_understood", &[])];
+        }
+        let query = query.as_str();
         let hits = match self.seerr.search(query, kind, page).await {
             Ok(hits) => hits,
             Err(e) => {

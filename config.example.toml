@@ -17,6 +17,11 @@ state_file = "/var/lib/signal-seerr/state.json"
 # within this window; see the design doc, section 3.5.
 poll_seconds = 30
 
+# How many people may leave in one reconciliation before the whole pass holds
+# every goodbye back instead: more at once is almost always Authentik
+# answering wrong, not a real wave. Raise it for the one pass that is one.
+# max_removed_per_pass = 2
+
 # The Authentik group that a person must be in to request anything.
 media_group = "Medien"
 

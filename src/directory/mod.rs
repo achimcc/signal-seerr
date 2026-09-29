@@ -21,6 +21,10 @@ pub trait Directory: Send + Sync {
     fn lookup(&self, aci: &Aci) -> Option<Member>;
 }
 
+/// 500 users a page: far past any household, and a bound on a pagination
+/// that never ends.
+const MAX_USER_PAGES: u64 = 100;
+
 pub struct AuthentikClient {
     base: String,
     token: Secret,
@@ -39,18 +43,53 @@ impl AuthentikClient {
         }
     }
 
+    /// Every user, all pages of them.
+    ///
+    /// An EMPTY result is an error (Audit 3, B128): Authentik answers a token
+    /// that lost its object permission with 200 and an empty list, and read
+    /// as the truth that would say goodbye to everybody. So is an answer
+    /// without `results` at all. A directory with not one user in it -- not
+    /// even its own admin -- is never what is really there.
     pub async fn users(&self, fallback_locale: &str) -> Result<Vec<AuthentikUser>> {
-        let response = self
-            .http
-            .get(format!("{}/api/v3/core/users/", self.base))
-            .query(&[("page_size", "500")])
-            .bearer_auth(self.token.expose())
-            .send()
-            .await?;
-        if !response.status().is_success() {
-            bail!("authentik answered {}", response.status());
+        let mut users = Vec::new();
+        let mut page: u64 = 1;
+        loop {
+            let response = self
+                .http
+                .get(format!("{}/api/v3/core/users/", self.base))
+                .query(&[("page_size", "500"), ("page", &page.to_string())])
+                .bearer_auth(self.token.expose())
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                bail!("authentik answered {}", response.status());
+            }
+            let body: serde_json::Value = response.json().await?;
+            if !body.get("results").is_some_and(|r| r.is_array()) {
+                bail!("authentik's user list carries no `results`");
+            }
+            users.extend(parse_users(&body, fallback_locale));
+
+            // `pagination.next` is the next page's NUMBER, 0 on the last.
+            let next = body
+                .get("pagination")
+                .and_then(|p| p.get("next"))
+                .and_then(|n| n.as_u64())
+                .unwrap_or(0);
+            if next == 0 {
+                break;
+            }
+            if next <= page || next > MAX_USER_PAGES {
+                bail!("authentik's pagination went from page {page} to {next}");
+            }
+            page = next;
         }
-        Ok(parse_users(&response.json().await?, fallback_locale))
+        if users.is_empty() {
+            bail!(
+                "authentik listed no users at all -- a permission problem, not everybody leaving"
+            );
+        }
+        Ok(users)
     }
 }
 
@@ -107,6 +146,19 @@ pub async fn apply<F, Fut>(
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<Option<Aci>>>,
 {
+    let conflicts: Vec<(String, String)> = changes
+        .iter()
+        .filter_map(|c| match c {
+            Change::Conflict {
+                username,
+                signal_username,
+                ..
+            } => Some((username.clone(), signal_username.clone())),
+            _ => None,
+        })
+        .collect();
+    state.keep_reported_conflicts(&conflicts);
+
     for change in changes {
         match change {
             Change::Added {
@@ -213,12 +265,43 @@ pub async fn apply<F, Fut>(
                 signal_username,
                 held_by,
             } => {
-                tracing::warn!(
+                if state.conflict_reported(&username, &signal_username) {
+                    continue;
+                }
+                // Loud, and once (Audit 3, B126): this is somebody locked
+                // out of the bot -- possibly on purpose, by whoever entered
+                // their name first -- not a passing hiccup.
+                tracing::error!(
                     username,
                     signal_username,
                     held_by,
-                    "signal name already taken"
+                    "signal name already taken -- telling the owner of the name"
                 );
+                // The stored ACI of the holder is what the NAME resolved to:
+                // the phone that owns the Signal name. That is the one
+                // person who can say which of the two accounts is theirs --
+                // the claimant, if the holder squatted, cannot be reached
+                // any other way.
+                let Some(holder) = state.by_user(&held_by).cloned() else {
+                    // Claimed by another fresh account in this very pass;
+                    // next pass the holder is stored and this goes out.
+                    continue;
+                };
+                let text = catalogue.text(
+                    holder.locale,
+                    "conflict.notice",
+                    &[
+                        ("claimant", username.as_str()),
+                        ("signal", signal_username.as_str()),
+                        ("holder", held_by.as_str()),
+                    ],
+                );
+                match messenger.send(&holder.aci, &text).await {
+                    Ok(()) => state.mark_conflict_reported(&username, &signal_username),
+                    Err(e) => {
+                        tracing::warn!(username, error = %e, "cannot tell about the conflict, will retry next pass")
+                    }
+                }
             }
         }
     }
@@ -541,6 +624,77 @@ mod tests {
         assert!(state.by_user("robert").is_none(), "the person is forgotten");
     }
 
+    /// Audit 3, B126 (B2-SS-4). Mallory enters Bob's Signal name before Bob
+    /// does; Bob then only gets `Conflict`, which used to be a `warn!` every
+    /// 30 s and nothing else -- Bob just saw a bot that never answered.
+    ///
+    /// The one ACI worth telling is the one the NAME resolves to: that is the
+    /// phone that owns the Signal name, i.e. Bob, whichever Authentik account
+    /// holds it here. It is told once per conflict, not once per pass, and
+    /// again if the same conflict comes back after it had gone.
+    #[tokio::test]
+    async fn a_conflict_is_told_once_to_the_owner_of_the_signal_name() {
+        let messenger = Arc::new(Sent::default());
+        let mut state = State::default();
+        let catalogue = Catalogue::load();
+        known(&mut state, "mallory", "bob.42", "bbbb");
+        let user = |name: &str, signal: Option<&str>| AuthentikUser {
+            username: name.into(),
+            signal_username: signal.map(Into::into),
+            locale: "de".into(),
+            groups: vec!["Medien".into()],
+        };
+        let conflicted = vec![user("mallory", Some("bob.42")), user("bob", Some("BOB.42"))];
+        let resolve = |_name: String| async { Ok(Some(Aci("unused".into()))) };
+
+        for _ in 0..3 {
+            let changes = plan(&state, &conflicted);
+            apply(
+                &mut state,
+                changes,
+                &conflicted,
+                &*messenger,
+                &catalogue,
+                resolve,
+            )
+            .await;
+        }
+        {
+            let sent = messenger.0.lock().unwrap();
+            assert_eq!(sent.len(), 1, "told once, not once per pass: {sent:?}");
+            assert_eq!(sent[0].0, "bbbb", "told to the owner of the name");
+            assert!(
+                sent[0].1.contains("bob"),
+                "names the claimant: {}",
+                sent[0].1
+            );
+            assert!(
+                sent[0].1.contains("mallory"),
+                "names the holder: {}",
+                sent[0].1
+            );
+        }
+
+        // Bob gives up and clears the field: the conflict is gone.
+        let calm = vec![user("mallory", Some("bob.42")), user("bob", None)];
+        let changes = plan(&state, &calm);
+        apply(&mut state, changes, &calm, &*messenger, &catalogue, resolve).await;
+        assert_eq!(messenger.0.lock().unwrap().len(), 1);
+
+        // And tries again: a new conflict, told again.
+        let changes = plan(&state, &conflicted);
+        apply(
+            &mut state,
+            changes,
+            &conflicted,
+            &*messenger,
+            &catalogue,
+            resolve,
+        )
+        .await;
+        assert_eq!(messenger.0.lock().unwrap().len(), 2);
+    }
+
     #[tokio::test]
     async fn the_person_is_forgotten_even_when_the_farewell_fails_to_send() {
         // The person asked to be forgotten by clearing the field; that must
@@ -617,6 +771,57 @@ mod tests {
     // brief's own tests stop at the pure functions -- but `AuthentikClient`
     // exists only for this task ("wires it to Authentik"), and unlike
     // `plan`/`apply`, nothing else in the test suite ever calls it.
+
+    /// Audit 3, B128 (B2-SS-6). Authentik answers a token that lost its
+    /// object permission with 200 and an EMPTY list -- and `plan` read that
+    /// as "everybody left": a farewell to every friend, every mapping gone,
+    /// and a fresh welcome for all of them once it healed. A directory
+    /// without a single user is never the truth; it is an error.
+    #[tokio::test]
+    async fn an_empty_user_list_is_an_error_not_everybody_leaving() {
+        for body in [
+            serde_json::json!({ "pagination": { "next": 0, "count": 0 }, "results": [] }),
+            serde_json::json!({ "detail": "something else entirely" }),
+        ] {
+            let server = wiremock::MockServer::start().await;
+            wiremock::Mock::given(wiremock::matchers::method("GET"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body.clone()))
+                .mount(&server)
+                .await;
+            let client = AuthentikClient::new(&server.uri(), Secret::from("t".to_string()));
+            assert!(
+                client.users("de").await.is_err(),
+                "{body} was taken for an empty directory"
+            );
+        }
+    }
+
+    /// Only the first page used to be read. Past `page_size` accounts, the
+    /// rest would have been "gone" -- the same mass farewell, by growth.
+    #[tokio::test]
+    async fn every_page_of_users_is_read() {
+        let server = wiremock::MockServer::start().await;
+        let page = |next: u32, name: &str| {
+            serde_json::json!({
+                "pagination": { "next": next },
+                "results": [ { "username": name, "groups_obj": [] } ]
+            })
+        };
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::query_param("page", "2"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(page(0, "zweite")))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(page(2, "erste")))
+            .mount(&server)
+            .await;
+
+        let client = AuthentikClient::new(&server.uri(), Secret::from("t".to_string()));
+        let users = client.users("de").await.unwrap();
+        let names: Vec<_> = users.iter().map(|u| u.username.as_str()).collect();
+        assert_eq!(names, ["erste", "zweite"]);
+    }
 
     #[tokio::test]
     async fn authentik_client_sends_a_bearer_token_and_parses_the_answer() {
