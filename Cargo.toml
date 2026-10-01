@@ -1,6 +1,6 @@
 [package]
 name = "signal-seerr"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 description = "Request movies and series through Seerr from a Signal chat"
@@ -22,7 +22,9 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
 [dev-dependencies]
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "aws_lc_rs"] }
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["test-util"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["aws-lc-rs"] }
 tower = { version = "0.5.3", features = ["util"] }
 wiremock = "0.6.5"

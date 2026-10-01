@@ -11,6 +11,28 @@
 //! Signal message, nor the other way round.
 
 use crate::secret::Secret;
+use anyhow::Context;
+use std::path::Path;
+
+/// The certificates in `[treff] ca_file`. Missing, unreadable, not PEM, or
+/// PEM without a single certificate in it are all errors: the operator asked
+/// for a pinned door, and a client that quietly fell back to the system's
+/// trust store -- or to none -- would be a different client from the one
+/// that was configured.
+fn read_ca_file(path: &Path) -> anyhow::Result<Vec<reqwest::Certificate>> {
+    let pem = std::fs::read(path)
+        .with_context(|| format!("treff.ca_file: cannot read {}", path.display()))?;
+    let certs = reqwest::Certificate::from_pem_bundle(&pem)
+        .with_context(|| format!("treff.ca_file: {} is not valid PEM", path.display()))?;
+    if certs.is_empty() {
+        anyhow::bail!(
+            "treff.ca_file: {} holds no certificate (expected one or more \
+             `-----BEGIN CERTIFICATE-----` blocks)",
+            path.display()
+        );
+    }
+    Ok(certs)
+}
 
 /// One event, as treff's `POST /internal/events` takes it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -41,13 +63,35 @@ pub struct TreffBell {
 }
 
 impl TreffBell {
-    pub fn new(url: String, token: Secret) -> anyhow::Result<Self> {
-        let client = reqwest::Client::builder()
+    /// `ca_file` is `[treff] ca_file`: a PEM file of certificates that are
+    /// the ONLY ones this client trusts. An internal door with a certificate
+    /// of its own has no business being reachable through any public CA, so
+    /// naming the file replaces the system's trust store for this one client
+    /// rather than adding to it. Without it, the client is what it was.
+    ///
+    /// Either way the name or address in the URL is checked against the
+    /// certificate: nothing here switches a verification off.
+    pub fn new(url: String, token: Secret, ca_file: Option<&Path>) -> anyhow::Result<Self> {
+        let mut builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             // Never follow a redirect: the token must not travel anywhere
             // the operator did not configure.
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+            .redirect(reqwest::redirect::Policy::none());
+        if let Some(path) = ca_file {
+            builder = builder.tls_certs_only(read_ca_file(path)?);
+        }
+        let client = match (builder.build(), ca_file) {
+            (Ok(client), _) => client,
+            // The PEM frame held, what is inside it did not: reqwest only
+            // looks into a certificate when it builds the trust store.
+            (Err(e), Some(path)) => {
+                return Err(anyhow::Error::new(e).context(format!(
+                    "treff.ca_file: {} holds a certificate that cannot be used as a trust anchor",
+                    path.display()
+                )))
+            }
+            (Err(e), None) => return Err(e.into()),
+        };
         Ok(Self { client, url, token })
     }
 
@@ -121,6 +165,7 @@ mod tests {
         let bell = TreffBell::new(
             format!("{}/internal/events", treff.uri()),
             Secret::from("events-token".to_string()),
+            None,
         )
         .expect("client");
         bell.ring(&event()).await.expect("taken");
@@ -134,7 +179,8 @@ mod tests {
             .respond_with(ResponseTemplate::new(200))
             .mount(&treff)
             .await;
-        let bell = TreffBell::new(treff.uri(), Secret::from("t".to_string())).expect("client");
+        let bell =
+            TreffBell::new(treff.uri(), Secret::from("t".to_string()), None).expect("client");
         bell.ring(&event()).await.expect("fine");
     }
 
@@ -147,7 +193,85 @@ mod tests {
             .expect(2)
             .mount(&treff)
             .await;
-        let bell = TreffBell::new(treff.uri(), Secret::from("t".to_string())).expect("client");
+        let bell =
+            TreffBell::new(treff.uri(), Secret::from("t".to_string()), None).expect("client");
         assert!(bell.ring(&event()).await.is_err());
+    }
+
+    // -- `[treff] ca_file`: what stops the start. What the client then does
+    // on the wire is in `tests/treff_tls.rs`, against a real TLS listener.
+
+    fn file_with(dir: &tempfile::TempDir, name: &str, body: &str) -> std::path::PathBuf {
+        let path = dir.path().join(name);
+        std::fs::write(&path, body).expect("write");
+        path
+    }
+
+    fn token() -> Secret {
+        Secret::from("events-token".to_string())
+    }
+
+    /// The whole chain of an error, causes included -- `to_string()` shows
+    /// only the outermost line.
+    fn chain(e: &anyhow::Error) -> String {
+        format!("{e:#}")
+    }
+
+    fn refusal(ca: &std::path::Path) -> String {
+        let err = TreffBell::new(
+            "https://192.0.2.50:8081/internal/events".into(),
+            token(),
+            Some(ca),
+        )
+        .err()
+        .expect("the client must not be built");
+        chain(&err)
+    }
+
+    #[test]
+    fn a_missing_ca_file_stops_the_start_and_names_the_path() {
+        let got = refusal(std::path::Path::new("/nonexistent/treff.pem"));
+        assert!(got.contains("treff.ca_file"), "got: {got}");
+        assert!(got.contains("/nonexistent/treff.pem"), "got: {got}");
+    }
+
+    #[test]
+    fn a_broken_pem_in_the_ca_file_stops_the_start() {
+        let dir = tempfile::tempdir().unwrap();
+        // A frame that opens and never closes.
+        let ca = file_with(
+            &dir,
+            "broken.pem",
+            "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIU\n",
+        );
+        let got = refusal(&ca);
+        assert!(got.contains("treff.ca_file"), "got: {got}");
+        assert!(got.contains("broken.pem"), "got: {got}");
+    }
+
+    /// Nothing that looks like PEM at all -- an empty file, a DER file, the
+    /// wrong file -- must not become "no extra trust, carry on".
+    #[test]
+    fn a_ca_file_without_a_certificate_stops_the_start() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, body) in [("empty.pem", ""), ("words.pem", "not a certificate\n")] {
+            let got = refusal(&file_with(&dir, name, body));
+            assert!(got.contains("treff.ca_file"), "{name}: got: {got}");
+            assert!(got.contains(name), "{name}: got: {got}");
+        }
+    }
+
+    /// A well-formed frame around something that is no certificate.
+    #[test]
+    fn a_ca_file_whose_certificate_is_not_one_stops_the_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let ca = file_with(
+            &dir,
+            "hollow.pem",
+            "-----BEGIN CERTIFICATE-----\naGVsbG8gd29ybGQ=\n-----END CERTIFICATE-----\n",
+        );
+        let got = refusal(&ca);
+        assert!(got.contains("treff.ca_file"), "got: {got}");
+        assert!(got.contains("hollow.pem"), "got: {got}");
     }
 }

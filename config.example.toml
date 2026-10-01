@@ -83,3 +83,17 @@ operator_name = "the operator"
 # # profiles ever get the "only in <language>" reason.
 # [insight.profile_languages]
 # "Dual Language, then German (1080p)" = ["German", "English"]
+
+# treff's bell: availability notices also go to treff, the forum on the same
+# server. Optional -- without this section nothing is sent.
+# [treff]
+# events_url = "https://192.0.2.50:8081/internal/events"
+# token_file = "/run/credentials/signal-seerr.service/treff-events"
+#
+# # For a door with a certificate no public CA signed: a PEM file with one or
+# # more certificates, which are then the ONLY ones trusted for events_url --
+# # the system's trust store is replaced for this client, not added to. The
+# # address in events_url is still checked against the certificate. Missing,
+# # unreadable or not PEM stops the bot at startup; so does ca_file next to
+# # an http:// URL. Leave it out to trust what the system trusts.
+# ca_file = "/etc/signal-seerr/treff.pem"

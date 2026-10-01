@@ -349,9 +349,46 @@ same server, whose bell shows it on the forum and on the server's start page:
 
 ```toml
 [treff]
-events_url = "http://192.0.2.50:8081/internal/events"
+events_url = "https://192.0.2.50:8081/internal/events"
 token_file = "/run/credentials/signal-seerr.service/treff-events"
+ca_file    = "/etc/signal-seerr/treff.pem"
 ```
+
+`ca_file` is optional and meant for a door whose certificate no public CA
+ever signed: a PEM file with one or more certificates, which are then the
+**only** ones the client for `events_url` trusts. The system's trust store
+is replaced for this one client, not added to — an internal door has no
+business being vouched for by anybody else. Without `ca_file` the client
+trusts what the system trusts, as before. Authentik, Seerr and the *arr are
+not affected either way.
+
+- The address or name in `events_url` is still checked against the
+  certificate. A door reached as `https://192.0.2.50:…` needs that address
+  as an IP subject alternative name; nothing in this bot switches a
+  verification off.
+- A certificate that is the door's own **must not call itself a CA**.
+  `openssl req -x509` writes `CA:TRUE` unless told otherwise, and such a
+  certificate is refused (`CaUsedAsEndEntity`) even though it is the very
+  one named in `ca_file`. Either make it without that —
+  `-addext basicConstraints=critical,CA:FALSE -addext subjectAltName=IP:192.0.2.50`
+  — or keep a CA of your own, sign the door's certificate with it and name
+  the CA here.
+- A `ca_file` that is missing, unreadable, not PEM or holds no certificate
+  stops the bot at startup, as does `ca_file` next to an `http://` URL. It
+  never falls back to the system's trust store.
+- It is a certificate, not a secret: it may sit in the Nix store or in
+  `/etc`. Under the NixOS module the unit runs as a `DynamicUser` behind
+  `ProtectSystem = "strict"` and `ProtectHome`, so the file has to be
+  readable by *any* user (the store, a `0644` file under `/etc`) or come in
+  as a credential (`LoadCredential = "treff-ca:/path"` through
+  `extraServiceConfig`, then
+  `ca_file = "/run/credentials/signal-seerr.service/treff-ca"`) — a file
+  that belongs to another user with mode `0600`, or one under `/home`,
+  `/root` or `/tmp`, is not there for it.
+
+An `http://` `events_url` still works and gets the same line in the journal
+at startup as the other plain endpoints: the events token then crosses the
+network unencrypted.
 
 It goes out whether or not the person has a Signal name — somebody who never
 linked Signal still has a bell — and neither channel holds up the other: a

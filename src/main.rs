@@ -230,6 +230,27 @@ async fn main() -> Result<()> {
     let secrets = Secrets::read(&config)?;
     let catalogue = Arc::new(Catalogue::load());
 
+    // treff's bell, if configured. Built here, before anything is waited for
+    // or spawned, so a bad URL or a `ca_file` that cannot be used stops the
+    // bot at startup -- not on the first film, and not after the reconciler
+    // has already taken its first round.
+    let bell: Option<Arc<dyn signal_seerr::bell::Bell>> =
+        match (&config.treff, secrets.treff_token.clone()) {
+            (Some(treff), Some(token)) => {
+                tracing::info!(
+                    url = %treff.events_url,
+                    pinned = treff.ca_file.is_some(),
+                    "availability notices also go to treff"
+                );
+                Some(Arc::new(signal_seerr::bell::TreffBell::new(
+                    treff.events_url.clone(),
+                    token,
+                    treff.ca_file.as_deref(),
+                )?))
+            }
+            _ => None,
+        };
+
     // signal-cli creates the socket and starts alongside us. Waiting is
     // right; waiting for ever is not. An unbounded wait inside a container
     // boot is exactly how a guest never finishes booting and a deploy
@@ -355,21 +376,6 @@ async fn main() -> Result<()> {
 
     // 2. The webhook listener.
     let webhook_task = {
-        // treff's bell, if configured. Built here so a bad URL stops the bot
-        // at startup rather than on the first film.
-        let bell: Option<Arc<dyn signal_seerr::bell::Bell>> = match (
-            &config.treff,
-            secrets.treff_token.clone(),
-        ) {
-            (Some(treff), Some(token)) => {
-                tracing::info!(url = %treff.events_url, "availability notices also go to treff");
-                Some(Arc::new(signal_seerr::bell::TreffBell::new(
-                    treff.events_url.clone(),
-                    token,
-                )?))
-            }
-            _ => None,
-        };
         let app = webhook::router(webhook::WebhookState {
             messenger: signal.clone(),
             seerr: seerr.clone(),

@@ -66,9 +66,16 @@ fn default_max_removed_per_pass() -> usize {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TreffConfig {
-    /// `http://<treff>:<port>/internal/events` — treff's internal listener.
+    /// `https://<treff>:<port>/internal/events` — treff's internal listener.
     pub events_url: String,
     pub token_file: PathBuf,
+    /// A PEM file with one or more certificates: the ONLY ones the client
+    /// for `events_url` trusts once this is set -- the system's trust store
+    /// is left out, not added to. For a door with a self-signed certificate.
+    /// A path and not a `*_file` secret: a certificate is public, it may sit
+    /// in the Nix store. Read in `bell::TreffBell::new`.
+    #[serde(default)]
+    pub ca_file: Option<PathBuf>,
 }
 
 impl Config {
@@ -81,6 +88,7 @@ impl Config {
         reject_missing_scheme("seerr_url", &cfg.seerr_url)?;
         if let Some(treff) = &cfg.treff {
             reject_missing_scheme("treff.events_url", &treff.events_url)?;
+            reject_ca_file_without_tls(treff)?;
         }
         if let Some(insight) = &cfg.insight {
             validate_insight(insight)?;
@@ -216,7 +224,21 @@ fn reject_missing_scheme(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-/// The authentik_url/seerr_url fields that are `http://` rather than
+/// A certificate to trust and a URL that never shows one: whoever wrote
+/// `ca_file` believes the token travels encrypted, and with `http://` it
+/// does not. That is a contradiction to refuse, not a warning to scroll past.
+fn reject_ca_file_without_tls(treff: &TreffConfig) -> Result<()> {
+    if treff.ca_file.is_some() && !treff.events_url.starts_with("https://") {
+        bail!(
+            "treff.ca_file is set but treff.events_url is not https:// ({:?}) -- \
+             no certificate would ever be checked",
+            treff.events_url
+        );
+    }
+    Ok(())
+}
+
+/// The endpoints a credential is sent to that are `http://` rather than
 /// `https://`, for `load()`'s startup warning. A pure function so the
 /// decision of what counts as unencrypted is tested directly, without
 /// capturing `tracing` output.
@@ -230,6 +252,9 @@ fn plain_http_fields(cfg: &Config) -> Vec<(&'static str, &str)> {
         if let Some(sonarr_url) = &insight.sonarr_url {
             fields.push(("insight.sonarr_url", sonarr_url.as_str()));
         }
+    }
+    if let Some(treff) = &cfg.treff {
+        fields.push(("treff.events_url", treff.events_url.as_str()));
     }
     fields
         .into_iter()
@@ -475,6 +500,68 @@ mod tests {
             ..Config::for_test()
         };
         assert!(plain_http_fields(&cfg).is_empty());
+    }
+
+    /// Appends a `[treff]` section to the example config, whose own copy
+    /// stays commented out.
+    fn with_treff_section(body: &str) -> String {
+        format!(
+            "{}\n[treff]\n{body}",
+            include_str!("../config.example.toml")
+        )
+    }
+
+    #[test]
+    fn treff_without_ca_file_parses_as_before() {
+        let dir = tempfile::tempdir().unwrap();
+        let body =
+            "events_url = \"http://192.0.2.50:8081/internal/events\"\ntoken_file = \"/dev/null\"\n";
+        let p = write(&dir, "c.toml", &with_treff_section(body));
+        let treff = Config::load(&p).expect("must parse").treff.expect("Some");
+        assert!(treff.ca_file.is_none());
+    }
+
+    #[test]
+    fn treff_ca_file_parses_next_to_an_https_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = "events_url = \"https://192.0.2.50:8081/internal/events\"\ntoken_file = \"/dev/null\"\nca_file = \"/etc/treff.pem\"\n";
+        let p = write(&dir, "c.toml", &with_treff_section(body));
+        let treff = Config::load(&p).expect("must parse").treff.expect("Some");
+        assert_eq!(treff.ca_file.as_deref(), Some(Path::new("/etc/treff.pem")));
+    }
+
+    #[test]
+    fn treff_ca_file_next_to_an_http_url_is_a_load_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = "events_url = \"http://192.0.2.50:8081/internal/events\"\ntoken_file = \"/dev/null\"\nca_file = \"/etc/treff.pem\"\n";
+        let p = write(&dir, "c.toml", &with_treff_section(body));
+        let err = Config::load(&p).unwrap_err().to_string();
+        assert!(err.contains("treff.ca_file"), "got: {err}");
+        assert!(err.contains("treff.events_url"), "got: {err}");
+    }
+
+    /// The events token is a credential like the others: over http:// it
+    /// gets the same line in the journal, over https:// none.
+    #[test]
+    fn plain_http_fields_names_the_treff_endpoint_too() {
+        let treff = |events_url: &str| Config {
+            authentik_url: "https://a.example.invalid".into(),
+            seerr_url: "https://b.example.invalid".into(),
+            treff: Some(TreffConfig {
+                events_url: events_url.into(),
+                token_file: "/dev/null".into(),
+                ca_file: None,
+            }),
+            ..Config::for_test()
+        };
+        let flagged = |cfg: &Config| -> Vec<&'static str> {
+            plain_http_fields(cfg).into_iter().map(|(f, _)| f).collect()
+        };
+        assert_eq!(
+            flagged(&treff("http://192.0.2.50:8081/internal/events")),
+            vec!["treff.events_url"]
+        );
+        assert!(flagged(&treff("https://192.0.2.50:8081/internal/events")).is_empty());
     }
 
     /// Replaces the value of a `field = "..."` line, whitespace around `=`
