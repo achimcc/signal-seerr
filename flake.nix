@@ -65,6 +65,16 @@
           HOME=$TMPDIR cargo-audit audit --no-fetch --db ${advisory-db} --file ${./Cargo.lock}
           touch $out
         '';
+        # Bans, sources and licenses of the dependency tree (deny.toml).
+        # Inside the package's build environment: the vendored crates are
+        # what `cargo metadata` reads there, so nothing is fetched.
+        deny = self.packages.${pkgs.system}.default.overrideAttrs (old: {
+          pname = "signal-seerr-deny";
+          nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.cargo-deny ];
+          buildPhase = "cargo deny --offline check bans sources licenses";
+          doCheck = false;
+          installPhase = "touch $out";
+        });
         clippy = self.packages.${pkgs.system}.default.overrideAttrs (old: {
           pname = "signal-seerr-clippy";
           nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.clippy ];

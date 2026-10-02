@@ -21,6 +21,10 @@ toml = "1.1.5"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
+[lints.rust]
+# No `unsafe` anywhere in this crate, and no `#[allow]` can bring it back.
+unsafe_code = "forbid"
+
 [dev-dependencies]
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "aws_lc_rs"] }
 tempfile = "3.27.0"

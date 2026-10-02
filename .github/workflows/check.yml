@@ -1,0 +1,34 @@
+# One job, one step per flake check. Each step builds a check with the same
+# toolchain as the dev shell, so CI and a local check cannot drift apart.
+#
+# The NixOS VM test (`checks.x86_64-linux.vm`) is NOT run here: it boots a
+# virtual machine, needs KVM and is slow. It is run locally:
+#   nix build .#checks.x86_64-linux.vm
+# A check added to flake.nix needs its own step below.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  flake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - run: nix build --print-build-logs .#checks.x86_64-linux.package
+      - run: nix build --print-build-logs .#checks.x86_64-linux.audit
+      - run: nix build --print-build-logs .#checks.x86_64-linux.deny
+      - run: nix build --print-build-logs .#checks.x86_64-linux.clippy
+      - run: nix build --print-build-logs .#checks.x86_64-linux.fmt
+      - run: nix build --print-build-logs .#checks.x86_64-linux.hardening
