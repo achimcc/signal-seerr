@@ -11,8 +11,20 @@ pub struct Config {
     pub signal_account_file: PathBuf,
     pub authentik_url: String,
     pub authentik_token_file: PathBuf,
+    /// A PEM file with one or more certificates: the ONLY ones the client
+    /// for `authentik_url` trusts once this is set -- the system's trust
+    /// store is left out, not added to. For a door with a self-signed
+    /// certificate. A path and not a `*_file` secret: a certificate is
+    /// public, it may sit in the Nix store. Read in
+    /// `directory::AuthentikClient::with_ca_file`.
+    #[serde(default)]
+    pub authentik_ca_file: Option<PathBuf>,
     pub seerr_url: String,
     pub seerr_key_file: PathBuf,
+    /// The same for `seerr_url`: a PEM file whose certificates are the ONLY
+    /// ones that client trusts. Read in `seerr::SeerrClient::with_ca_file`.
+    #[serde(default)]
+    pub seerr_ca_file: Option<PathBuf>,
     pub webhook_listen: SocketAddr,
     pub webhook_token_file: PathBuf,
     pub state_file: PathBuf,
@@ -86,15 +98,49 @@ impl Config {
             .with_context(|| format!("cannot parse config {}", path.display()))?;
         reject_missing_scheme("authentik_url", &cfg.authentik_url)?;
         reject_missing_scheme("seerr_url", &cfg.seerr_url)?;
+        reject_ca_file_without_tls(
+            "authentik_ca_file",
+            cfg.authentik_ca_file.as_deref(),
+            "authentik_url",
+            &cfg.authentik_url,
+        )?;
+        reject_ca_file_without_tls(
+            "seerr_ca_file",
+            cfg.seerr_ca_file.as_deref(),
+            "seerr_url",
+            &cfg.seerr_url,
+        )?;
         if let Some(treff) = &cfg.treff {
             reject_missing_scheme("treff.events_url", &treff.events_url)?;
-            reject_ca_file_without_tls(treff)?;
+            reject_ca_file_without_tls(
+                "treff.ca_file",
+                treff.ca_file.as_deref(),
+                "treff.events_url",
+                &treff.events_url,
+            )?;
         }
         if let Some(insight) = &cfg.insight {
             validate_insight(insight)?;
             reject_missing_scheme("insight.radarr_url", &insight.radarr_url)?;
             if let Some(sonarr_url) = &insight.sonarr_url {
                 reject_missing_scheme("insight.sonarr_url", sonarr_url)?;
+            }
+            // One client, one trust store, two doors: each URL is held
+            // against the same `ca_file`.
+            let ca_file = insight.ca_file.as_deref();
+            reject_ca_file_without_tls(
+                "insight.ca_file",
+                ca_file,
+                "insight.radarr_url",
+                &insight.radarr_url,
+            )?;
+            if let Some(sonarr_url) = &insight.sonarr_url {
+                reject_ca_file_without_tls(
+                    "insight.ca_file",
+                    ca_file,
+                    "insight.sonarr_url",
+                    sonarr_url,
+                )?;
             }
         }
         // Plain http:// is this deployment's deliberate choice today (see
@@ -119,8 +165,10 @@ impl Config {
             signal_account_file: "/dev/null".into(),
             authentik_url: "http://localhost:9000".into(),
             authentik_token_file: "/dev/null".into(),
+            authentik_ca_file: None,
             seerr_url: "http://localhost:5055".into(),
             seerr_key_file: "/dev/null".into(),
+            seerr_ca_file: None,
             webhook_listen: "127.0.0.1:0".parse().unwrap(),
             webhook_token_file: "/dev/null".into(),
             state_file: "/tmp/state.json".into(),
@@ -152,6 +200,15 @@ pub struct InsightConfig {
     pub sonarr_url: Option<String>,
     #[serde(default)]
     pub sonarr_key_file: Option<PathBuf>,
+    /// A PEM file with one or more certificates: the ONLY ones trusted for
+    /// `radarr_url` AND `sonarr_url` once this is set -- the two share one
+    /// client, so they share one trust store, and a Radarr and a Sonarr
+    /// with a certificate each need both in this one file. The system's
+    /// trust store is left out, not added to. A path and not a `*_file`
+    /// secret: a certificate is public. Read in
+    /// `arr::ArrClient::with_ca_file`.
+    #[serde(default)]
+    pub ca_file: Option<PathBuf>,
     #[serde(default = "ten_minutes")]
     pub poll_seconds: u64,
     #[serde(default = "one_day")]
@@ -224,15 +281,21 @@ fn reject_missing_scheme(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-/// A certificate to trust and a URL that never shows one: whoever wrote
-/// `ca_file` believes the token travels encrypted, and with `http://` it
-/// does not. That is a contradiction to refuse, not a warning to scroll past.
-fn reject_ca_file_without_tls(treff: &TreffConfig) -> Result<()> {
-    if treff.ca_file.is_some() && !treff.events_url.starts_with("https://") {
+/// A certificate to trust and a URL that never shows one: whoever wrote a
+/// `ca_file` believes the credential travels encrypted, and with `http://`
+/// it does not. That is a contradiction to refuse, not a warning to scroll
+/// past. The same for every pair of a `*ca_file` and the URL it is for; the
+/// message names both fields.
+fn reject_ca_file_without_tls(
+    ca_field: &str,
+    ca_file: Option<&Path>,
+    url_field: &str,
+    url: &str,
+) -> Result<()> {
+    if ca_file.is_some() && !url.starts_with("https://") {
         bail!(
-            "treff.ca_file is set but treff.events_url is not https:// ({:?}) -- \
-             no certificate would ever be checked",
-            treff.events_url
+            "{ca_field} is set but {url_field} is not https:// ({url:?}) -- \
+             no certificate would ever be checked"
         );
     }
     Ok(())
@@ -419,6 +482,7 @@ mod tests {
                 radarr_key_file: "/dev/null".into(),
                 sonarr_url: Some("http://192.0.2.40:8989".into()),
                 sonarr_key_file: Some("/dev/null".into()),
+                ca_file: None,
                 poll_seconds: 600,
                 stall_after_hours: 24,
                 reason_search: false,
@@ -564,6 +628,113 @@ mod tests {
         assert!(flagged(&treff("https://192.0.2.50:8081/internal/events")).is_empty());
     }
 
+    // -- `authentik_ca_file`, `seerr_ca_file`, `[insight] ca_file` (B158) --
+
+    /// The example config with `lines` put in FRONT of it: a top-level key
+    /// appended at the end would land in whichever section came last.
+    fn with_top_level(base: &str, lines: &str) -> String {
+        format!("{lines}\n{base}")
+    }
+
+    #[test]
+    fn without_the_ca_files_nothing_is_pinned() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = write(&dir, "c.toml", &with_insight_section(MINIMAL_INSIGHT));
+        let cfg = Config::load(&p).expect("must parse");
+        assert!(cfg.authentik_ca_file.is_none());
+        assert!(cfg.seerr_ca_file.is_none());
+        assert!(cfg.insight.expect("Some").ca_file.is_none());
+    }
+
+    #[test]
+    fn the_top_level_ca_files_parse_next_to_https_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        let example = include_str!("../config.example.toml");
+        let body = with_field_value(example, "authentik_url", "https://192.0.2.10:9443");
+        let body = with_field_value(&body, "seerr_url", "https://192.0.2.20:5055");
+        let body = with_top_level(
+            &body,
+            "authentik_ca_file = \"/etc/authentik.pem\"\nseerr_ca_file = \"/etc/seerr.pem\"",
+        );
+        let cfg = Config::load(&write(&dir, "c.toml", &body)).expect("must parse");
+        assert_eq!(
+            cfg.authentik_ca_file.as_deref(),
+            Some(Path::new("/etc/authentik.pem"))
+        );
+        assert_eq!(
+            cfg.seerr_ca_file.as_deref(),
+            Some(Path::new("/etc/seerr.pem"))
+        );
+    }
+
+    #[test]
+    fn authentik_ca_file_next_to_an_http_url_is_a_load_error() {
+        let dir = tempfile::tempdir().unwrap();
+        // The example's authentik_url is http://.
+        let body = with_top_level(
+            include_str!("../config.example.toml"),
+            "authentik_ca_file = \"/etc/authentik.pem\"",
+        );
+        let err = Config::load(&write(&dir, "c.toml", &body))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("authentik_ca_file"), "got: {err}");
+        assert!(err.contains("authentik_url"), "got: {err}");
+    }
+
+    #[test]
+    fn seerr_ca_file_next_to_an_http_url_is_a_load_error() {
+        let dir = tempfile::tempdir().unwrap();
+        // The example's seerr_url is http://.
+        let body = with_top_level(
+            include_str!("../config.example.toml"),
+            "seerr_ca_file = \"/etc/seerr.pem\"",
+        );
+        let err = Config::load(&write(&dir, "c.toml", &body))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("seerr_ca_file"), "got: {err}");
+        assert!(err.contains("seerr_url"), "got: {err}");
+    }
+
+    #[test]
+    fn insight_ca_file_parses_next_to_https_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = format!(
+            "{MINIMAL_INSIGHT}sonarr_url = \"https://sonarr.example.invalid\"\n\
+             sonarr_key_file = \"/dev/null\"\nca_file = \"/etc/arr.pem\"\n"
+        );
+        let p = write(&dir, "c.toml", &with_insight_section(&body));
+        let insight = Config::load(&p).expect("must parse").insight.expect("Some");
+        assert_eq!(insight.ca_file.as_deref(), Some(Path::new("/etc/arr.pem")));
+    }
+
+    #[test]
+    fn insight_ca_file_next_to_an_http_radarr_url_is_a_load_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = "radarr_url = \"http://192.0.2.30:7878\"\nradarr_key_file = \"/dev/null\"\n\
+                    notices_file = \"/tmp/notices.json\"\nca_file = \"/etc/arr.pem\"\n";
+        let p = write(&dir, "c.toml", &with_insight_section(body));
+        let err = Config::load(&p).unwrap_err().to_string();
+        assert!(err.contains("insight.ca_file"), "got: {err}");
+        assert!(err.contains("insight.radarr_url"), "got: {err}");
+    }
+
+    /// One client, one trust store, two doors: an https Radarr does not
+    /// excuse an http Sonarr next to the same `ca_file`.
+    #[test]
+    fn insight_ca_file_next_to_an_http_sonarr_url_is_a_load_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = format!(
+            "{MINIMAL_INSIGHT}sonarr_url = \"http://192.0.2.40:8989\"\n\
+             sonarr_key_file = \"/dev/null\"\nca_file = \"/etc/arr.pem\"\n"
+        );
+        let p = write(&dir, "c.toml", &with_insight_section(&body));
+        let err = Config::load(&p).unwrap_err().to_string();
+        assert!(err.contains("insight.ca_file"), "got: {err}");
+        assert!(err.contains("insight.sonarr_url"), "got: {err}");
+    }
+
     /// Replaces the value of a `field = "..."` line, whitespace around `=`
     /// notwithstanding, without disturbing the rest of the file -- brittle
     /// exact-string matching would break on the next reformat of the
@@ -675,6 +846,7 @@ mod tests {
                 radarr_key_file: radarr_key,
                 sonarr_url: None,
                 sonarr_key_file: None,
+                ca_file: None,
                 poll_seconds: 600,
                 stall_after_hours: 24,
                 reason_search: false,
@@ -702,6 +874,7 @@ mod tests {
                 radarr_key_file: radarr_key,
                 sonarr_url: Some("https://sonarr.example.invalid".into()),
                 sonarr_key_file: Some(sonarr_key),
+                ca_file: None,
                 poll_seconds: 600,
                 stall_after_hours: 24,
                 reason_search: false,

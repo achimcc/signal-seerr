@@ -8,6 +8,7 @@ use crate::state::{Entry, State};
 use anyhow::{bail, Result};
 use diff::{AuthentikUser, Change};
 use std::future::Future;
+use std::path::Path;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Member {
@@ -32,15 +33,39 @@ pub struct AuthentikClient {
 }
 
 impl AuthentikClient {
+    /// The client without a `ca_file`: it trusts what the system trusts.
+    /// `main` goes through `with_ca_file`; this is the short form for
+    /// everything that has no certificate to name.
     pub fn new(base: &str, token: Secret) -> AuthentikClient {
-        AuthentikClient {
+        AuthentikClient::with_ca_file(base, token, None)
+            .expect("an HTTP client that names no ca_file")
+    }
+
+    /// `ca_file` is `authentik_ca_file`: a PEM file of certificates that are
+    /// the ONLY ones this client trusts -- the system's trust store is
+    /// replaced for it, not added to (see `tls::client`). A file that is
+    /// missing or cannot be used is an error naming the field and the path.
+    /// `None` is the client as it always was.
+    pub fn with_ca_file(
+        base: &str,
+        token: Secret,
+        ca_file: Option<&Path>,
+    ) -> Result<AuthentikClient> {
+        let builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            // A redirect carries our own headers onwards. reqwest strips
+            // `Authorization` only when the HOST changes, so a redirect
+            // within the same host would take this bearer token along --
+            // and whatever answered there would be read as the directory,
+            // which decides who is greeted and who is told goodbye. Nothing
+            // this bot calls in Authentik redirects, so refusing is free
+            // (Audit 3, B158).
+            .redirect(reqwest::redirect::Policy::none());
+        Ok(AuthentikClient {
             base: base.trim_end_matches('/').to_string(),
             token,
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(20))
-                .build()
-                .expect("a client with no TLS surprises"),
-        }
+            http: crate::tls::client(builder, ca_file, "authentik_ca_file")?,
+        })
     }
 
     /// Every user, all pages of them.
@@ -849,6 +874,65 @@ mod tests {
         assert_eq!(users.len(), 1);
         assert_eq!(users[0].username, "robert");
         assert_eq!(users[0].signal_name(), Some("robert.42"));
+    }
+
+    /// Audit 3, B158. The client used to follow redirects, and the bearer
+    /// token went along to wherever one pointed on the same host -- while
+    /// whatever answered there was read as the directory. A 302 is now an
+    /// answer like any other non-200: an error, and nothing is fetched from
+    /// the place it names.
+    #[tokio::test]
+    async fn a_redirect_from_authentik_is_not_followed() {
+        // What would be taken for the directory if the redirect were
+        // followed -- so that following it shows as data, not as an error
+        // that happens to look like the refusal.
+        let somebody_elses_list = || {
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "pagination": { "next": 0 },
+                "results": [ { "username": "mallory", "groups_obj": [] } ]
+            }))
+        };
+        // Two ways out: to another host, and to another path on the same
+        // one -- the second is where reqwest would have kept the token.
+        for same_host in [false, true] {
+            let elsewhere = wiremock::MockServer::start().await;
+            wiremock::Mock::given(wiremock::matchers::any())
+                .respond_with(somebody_elses_list())
+                .expect(0)
+                .mount(&elsewhere)
+                .await;
+            let server = wiremock::MockServer::start().await;
+            let target = if same_host {
+                "/somewhere/else/".to_string()
+            } else {
+                format!("{}/somewhere/else/", elsewhere.uri())
+            };
+            wiremock::Mock::given(wiremock::matchers::path("/api/v3/core/users/"))
+                .respond_with(
+                    wiremock::ResponseTemplate::new(302).insert_header("location", target.as_str()),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            wiremock::Mock::given(wiremock::matchers::path("/somewhere/else/"))
+                .respond_with(somebody_elses_list())
+                .expect(0)
+                .mount(&server)
+                .await;
+
+            let client =
+                AuthentikClient::new(&server.uri(), Secret::from("secret-token".to_string()));
+            let err = client
+                .users("de")
+                .await
+                .expect_err("a redirect is not a user list")
+                .to_string();
+            assert!(err.contains("302"), "same_host={same_host}, got: {err}");
+            // Checked here rather than left to `Drop`, so a failure names
+            // which of the two ways out was taken.
+            server.verify().await;
+            elsewhere.verify().await;
+        }
     }
 
     #[tokio::test]

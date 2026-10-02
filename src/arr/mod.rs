@@ -10,6 +10,7 @@ use crate::model::MediaKind;
 use crate::secret::Secret;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
+use std::path::Path;
 use std::time::Duration;
 
 /// What a plain lookup -- one movie, the queue, a history list -- may take.
@@ -184,30 +185,45 @@ pub struct ArrClient {
 }
 
 impl ArrClient {
+    /// The client without a `ca_file`: it trusts what the system trusts.
+    /// `main` goes through `with_ca_file`; this is the short form for
+    /// everything that has no certificate to name.
     pub fn new(radarr_url: &str, radarr_key: Secret, sonarr: Option<(&str, Secret)>) -> ArrClient {
-        ArrClient {
+        ArrClient::with_ca_file(radarr_url, radarr_key, sonarr, None)
+            .expect("an HTTP client that names no ca_file")
+    }
+
+    /// `ca_file` is `[insight] ca_file`: a PEM file of certificates that are
+    /// the ONLY ones this client trusts -- the system's trust store is
+    /// replaced for it, not added to (see `tls::client`). Radarr and Sonarr
+    /// share the one client and therefore the one file: where each has a
+    /// certificate of its own, both go into it. A file that is missing or
+    /// cannot be used is an error naming the field and the path. `None` is
+    /// the client as it always was.
+    pub fn with_ca_file(
+        radarr_url: &str,
+        radarr_key: Secret,
+        sonarr: Option<(&str, Secret)>,
+        ca_file: Option<&Path>,
+    ) -> Result<ArrClient> {
+        // No `.timeout()` on the builder: every call names its own
+        // deadline (`get_within`), and a default underneath it would only
+        // raise the question of which of the two wins.
+        let builder = reqwest::Client::builder()
+            // A redirect carries our own headers onwards. reqwest strips
+            // `Authorization` when the host changes; `X-Api-Key` is not a
+            // header it knows about, so it is sent to wherever the
+            // redirect points -- and this one is full write access to
+            // Radarr. Nothing this bot calls redirects, so refusing is
+            // free.
+            .redirect(reqwest::redirect::Policy::none());
+        Ok(ArrClient {
             radarr: (radarr_url.to_string(), radarr_key),
             sonarr: sonarr.map(|(url, key)| (url.to_string(), key)),
             standard_deadline: STANDARD_DEADLINE,
             release_deadline: RELEASE_DEADLINE,
-            // No `.timeout()` on the builder: every call names its own
-            // deadline (`get_within`), and a default underneath it would only
-            // raise the question of which of the two wins.
-            http: reqwest::Client::builder()
-                // A redirect carries our own headers onwards. reqwest strips
-                // `Authorization` when the host changes; `X-Api-Key` is not a
-                // header it knows about, so it is sent to wherever the
-                // redirect points -- and this one is full write access to
-                // Radarr. Nothing this bot calls redirects, so refusing is
-                // free.
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect(
-                    "could not build the HTTP client -- rustls-platform-verifier reads the \
-                     system certificate store as soon as a Client exists, so this fails \
-                     wherever that store is missing; point SSL_CERT_FILE at a CA bundle",
-                ),
-        }
+            http: crate::tls::client(builder, ca_file, "insight.ca_file")?,
+        })
     }
 
     /// The same client with both deadlines named. Nothing in `main` calls

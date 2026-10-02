@@ -178,7 +178,14 @@ fn insight_parts(
     // URL without its key file and vice versa, so either both are here or
     // neither is.
     let sonarr = insight.sonarr_url.as_deref().zip(sonarr_key);
-    let arr = Arc::new(ArrClient::new(&insight.radarr_url, radarr_key, sonarr));
+    // Fallible since `[insight] ca_file` (Audit 3, B158): a file that
+    // cannot be used stops the start here, naming the field and the path.
+    let arr = Arc::new(ArrClient::with_ca_file(
+        &insight.radarr_url,
+        radarr_key,
+        sonarr,
+        insight.ca_file.as_deref(),
+    )?);
 
     let notices = match Notices::load(&insight.notices_file) {
         Ok(notices) => Some(Arc::new(RwLock::new(notices))),
@@ -251,6 +258,22 @@ async fn main() -> Result<()> {
             _ => None,
         };
 
+    // The same for the two clients every start has: a `seerr_ca_file` or
+    // `authentik_ca_file` that is missing or cannot be used stops the bot
+    // here, with the field and the path in the message (Audit 3, B158).
+    // The *arr client's `[insight] ca_file` does the same in
+    // `insight_parts` below, before any task is spawned.
+    let seerr = Arc::new(SeerrClient::with_ca_file(
+        &config.seerr_url,
+        secrets.seerr_key,
+        config.seerr_ca_file.as_deref(),
+    )?);
+    let authentik = AuthentikClient::with_ca_file(
+        &config.authentik_url,
+        secrets.authentik_token,
+        config.authentik_ca_file.as_deref(),
+    )?;
+
     // signal-cli creates the socket and starts alongside us. Waiting is
     // right; waiting for ever is not. An unbounded wait inside a container
     // boot is exactly how a guest never finishes booting and a deploy
@@ -265,8 +288,6 @@ async fn main() -> Result<()> {
         SignalClient::connect(&config.signal_socket, secrets.signal_account.expose()).await?;
 
     let state = Arc::new(RwLock::new(State::load(&config.state_file)?));
-    let seerr = Arc::new(SeerrClient::new(&config.seerr_url, secrets.seerr_key));
-    let authentik = AuthentikClient::new(&config.authentik_url, secrets.authentik_token);
 
     // What [insight] adds, wired here rather than next to the task that
     // uses it: a notices file that cannot be read is an error somebody has
@@ -499,6 +520,7 @@ mod watch_settings_tests {
             radarr_key_file: "/dev/null".into(),
             sonarr_url: None,
             sonarr_key_file: None,
+            ca_file: None,
             poll_seconds: 600,
             stall_after_hours: 36,
             reason_search: false,

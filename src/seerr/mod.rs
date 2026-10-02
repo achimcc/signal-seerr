@@ -3,6 +3,7 @@ use crate::secret::Secret;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use std::path::Path;
 
 /// Seerr's MediaStatus, from dist/constants/media.js. 4 = PARTIALLY_AVAILABLE,
 /// 5 = AVAILABLE; 2 (PENDING) and 3 (PROCESSING) mean somebody already asked.
@@ -193,26 +194,33 @@ pub struct SeerrClient {
 }
 
 impl SeerrClient {
+    /// The client without a `ca_file`: it trusts what the system trusts.
+    /// `main` goes through `with_ca_file`; this is the short form for
+    /// everything that has no certificate to name.
     pub fn new(base: &str, key: Secret) -> SeerrClient {
-        SeerrClient {
+        SeerrClient::with_ca_file(base, key, None).expect("an HTTP client that names no ca_file")
+    }
+
+    /// `ca_file` is `seerr_ca_file`: a PEM file of certificates that are the
+    /// ONLY ones this client trusts -- the system's trust store is replaced
+    /// for it, not added to (see `tls::client`). A file that is missing or
+    /// cannot be used is an error naming the field and the path. `None` is
+    /// the client as it always was.
+    pub fn with_ca_file(base: &str, key: Secret, ca_file: Option<&Path>) -> Result<SeerrClient> {
+        let builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            // A redirect carries our own headers onwards. reqwest strips
+            // `Authorization` when the host changes; `X-Api-Key` and
+            // `X-API-User` are not headers it knows about, so they would
+            // be sent to wherever the redirect points -- and that key is
+            // a Seerr administrator. Nothing this bot calls redirects,
+            // so refusing is free.
+            .redirect(reqwest::redirect::Policy::none());
+        Ok(SeerrClient {
             base: base.trim_end_matches('/').to_string(),
             key,
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(20))
-                // A redirect carries our own headers onwards. reqwest strips
-                // `Authorization` when the host changes; `X-Api-Key` and
-                // `X-API-User` are not headers it knows about, so they would
-                // be sent to wherever the redirect points -- and that key is
-                // a Seerr administrator. Nothing this bot calls redirects,
-                // so refusing is free.
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect(
-                    "could not build the HTTP client -- rustls-platform-verifier reads the \
-                     system certificate store as soon as a Client exists, so this fails \
-                     wherever that store is missing; point SSL_CERT_FILE at a CA bundle",
-                ),
-        }
+            http: crate::tls::client(builder, ca_file, "seerr_ca_file")?,
+        })
     }
 
     fn get(&self, path: &str) -> reqwest::RequestBuilder {

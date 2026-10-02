@@ -92,6 +92,7 @@ gets refused with, not just that the server answered.
 | `src/watch.rs` | the loop that speaks up unasked: once per wish and kind of problem, with a budgeted release search |
 | `src/webhook.rs` | the Seerr webhook listener — `MEDIA_AVAILABLE` / `MEDIA_FAILED` back to the requester |
 | `src/state.rs` | the on-disk mapping between Signal accounts and Authentik usernames |
+| `src/tls.rs` | the one way an HTTP client is built: a `*ca_file` replaces the system's trust store for that client, and every refusal names the config field and the path |
 | `src/i18n.rs`, `i18n/` | locale selection and the message catalogues |
 | `nix/module.nix`, `nix/test.nix` | the NixOS module and its VM test |
 

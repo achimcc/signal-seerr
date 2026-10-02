@@ -157,6 +157,9 @@ A field-by-field note on what is not obvious from the name:
 - `authentik_url` / `seerr_url` need an explicit scheme (`http://` or
   `https://`) — a bare host:port is rejected at startup, not at the first
   request.
+- `authentik_ca_file` / `seerr_ca_file` are optional, one for each of those
+  two URLs, and meant for an `https://` door whose certificate no public CA
+  ever signed. See [A certificate of its own](#a-certificate-of-its-own).
 - `media_group` is the Authentik group that gates *making* requests. Being
   known to the bot and being in this group are different things: an
   Authentik user without it gets told to ask `operator_name`, not a generic
@@ -360,7 +363,8 @@ ever signed: a PEM file with one or more certificates, which are then the
 is replaced for this one client, not added to — an internal door has no
 business being vouched for by anybody else. Without `ca_file` the client
 trusts what the system trusts, as before. Authentik, Seerr and the *arr are
-not affected either way.
+not affected either way: each has a field of its own, see
+[A certificate of its own](#a-certificate-of-its-own).
 
 - The address or name in `events_url` is still checked against the
   certificate. A door reached as `https://192.0.2.50:…` needs that address
@@ -396,6 +400,56 @@ treff that does not answer is logged and tried once more, the Signal message
 goes out regardless. The person is named by their Seerr (= Jellyfin) user
 name, which is treff's handle for them; `seerr:<request id>` keeps a webhook
 that arrives twice one entry. Leave the section out and nothing is sent.
+
+### A certificate of its own
+
+The bot sends a credential to four places, and each of them can be a door
+with a certificate no public CA ever signed. Each has its own optional
+field:
+
+| Field | For | Credential behind it |
+|---|---|---|
+| `authentik_ca_file` (top level) | `authentik_url` | the Authentik token |
+| `seerr_ca_file` (top level) | `seerr_url` | the Seerr API key |
+| `[insight] ca_file` | `radarr_url` **and** `sonarr_url` | the Radarr and Sonarr API keys |
+| `[treff] ca_file` | `events_url` | the events token |
+
+```toml
+authentik_url     = "https://192.0.2.10:9443"
+authentik_ca_file = "/etc/signal-seerr/authentik.pem"
+
+seerr_url     = "https://192.0.2.20:5055"
+seerr_ca_file = "/etc/signal-seerr/seerr.pem"
+
+[insight]
+radarr_url = "https://192.0.2.30:7878"
+sonarr_url = "https://192.0.2.40:8989"
+ca_file    = "/etc/signal-seerr/arr.pem"
+```
+
+All four work the way `[treff] ca_file` is described above, and every point
+in that list holds for each of them:
+
+- The file is PEM with one or more certificates, and they are the **only**
+  ones that one client trusts — the system's trust store is replaced for
+  it, not added to. The other clients are not affected: a field pins the
+  door it is for and no other.
+- The address or name in the URL is still checked against the certificate,
+  and a certificate that is the door's own must not call itself a CA.
+- A file that is missing, unreadable, not PEM or holds no certificate stops
+  the bot at startup, with the field and the path in the message; so does
+  a `*ca_file` next to an `http://` URL. Nothing falls back to the system's
+  trust store.
+- Radarr and Sonarr are read by one client, so `[insight] ca_file` is one
+  file for both: where each has a certificate of its own, put both into
+  it. With `ca_file` set, an `http://` `radarr_url` or `sonarr_url` is a
+  load error — one pinned and one plain is not a setup this field has.
+- Without the field a client trusts what the system trusts, exactly as
+  before.
+
+None of the four clients follows a redirect: a `302` from Authentik, Seerr,
+Radarr, Sonarr or treff is an error, and the credential goes nowhere the
+configuration did not name.
 
 ### What `reason_search` costs
 

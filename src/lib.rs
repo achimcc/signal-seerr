@@ -11,5 +11,6 @@ pub mod secret;
 pub mod seerr;
 pub mod signal;
 pub mod state;
+pub mod tls;
 pub mod watch;
 pub mod webhook;

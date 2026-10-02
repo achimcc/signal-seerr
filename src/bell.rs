@@ -11,28 +11,7 @@
 //! Signal message, nor the other way round.
 
 use crate::secret::Secret;
-use anyhow::Context;
 use std::path::Path;
-
-/// The certificates in `[treff] ca_file`. Missing, unreadable, not PEM, or
-/// PEM without a single certificate in it are all errors: the operator asked
-/// for a pinned door, and a client that quietly fell back to the system's
-/// trust store -- or to none -- would be a different client from the one
-/// that was configured.
-fn read_ca_file(path: &Path) -> anyhow::Result<Vec<reqwest::Certificate>> {
-    let pem = std::fs::read(path)
-        .with_context(|| format!("treff.ca_file: cannot read {}", path.display()))?;
-    let certs = reqwest::Certificate::from_pem_bundle(&pem)
-        .with_context(|| format!("treff.ca_file: {} is not valid PEM", path.display()))?;
-    if certs.is_empty() {
-        anyhow::bail!(
-            "treff.ca_file: {} holds no certificate (expected one or more \
-             `-----BEGIN CERTIFICATE-----` blocks)",
-            path.display()
-        );
-    }
-    Ok(certs)
-}
 
 /// One event, as treff's `POST /internal/events` takes it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -70,28 +49,16 @@ impl TreffBell {
     /// rather than adding to it. Without it, the client is what it was.
     ///
     /// Either way the name or address in the URL is checked against the
-    /// certificate: nothing here switches a verification off.
+    /// certificate: nothing here switches a verification off. The reading
+    /// and the refusals are `tls::client`'s, shared with the other three
+    /// doors.
     pub fn new(url: String, token: Secret, ca_file: Option<&Path>) -> anyhow::Result<Self> {
-        let mut builder = reqwest::Client::builder()
+        let builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             // Never follow a redirect: the token must not travel anywhere
             // the operator did not configure.
             .redirect(reqwest::redirect::Policy::none());
-        if let Some(path) = ca_file {
-            builder = builder.tls_certs_only(read_ca_file(path)?);
-        }
-        let client = match (builder.build(), ca_file) {
-            (Ok(client), _) => client,
-            // The PEM frame held, what is inside it did not: reqwest only
-            // looks into a certificate when it builds the trust store.
-            (Err(e), Some(path)) => {
-                return Err(anyhow::Error::new(e).context(format!(
-                    "treff.ca_file: {} holds a certificate that cannot be used as a trust anchor",
-                    path.display()
-                )))
-            }
-            (Err(e), None) => return Err(e.into()),
-        };
+        let client = crate::tls::client(builder, ca_file, "treff.ca_file")?;
         Ok(Self { client, url, token })
     }
 

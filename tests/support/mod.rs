@@ -2,6 +2,9 @@
 //! certificate made up on the spot and signed by nobody but itself. wiremock
 //! speaks no TLS, hence the few lines of HTTP by hand.
 //!
+//! Since B158 the same door stands in for Authentik, Seerr and the *arr
+//! (`Door::answering`): they get a `ca_file` of their own.
+//!
 //! No key and no certificate is kept in this repository -- `rcgen` makes
 //! both afresh for every door.
 #![allow(dead_code)]
@@ -15,11 +18,20 @@ use tokio_rustls::rustls;
 pub struct Arrived {
     pub request_line: String,
     pub authorization: Option<String>,
+    /// `X-Api-Key`, which is how Seerr, Radarr and Sonarr take a credential.
+    pub api_key: Option<String>,
     pub body: String,
 }
 
+/// What treff says to an event it took.
+const CREATED: &str = "HTTP/1.1 201 Created\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+
 pub struct Door {
+    /// treff's events endpoint behind this door.
     pub url: String,
+    /// The door itself, `https://127.0.0.1:<port>` -- for a client that
+    /// appends its own path.
+    pub base: String,
     /// The door's certificate, as it would sit in `[treff] ca_file`.
     pub cert_pem: String,
     arrived: Arc<Mutex<Vec<Arrived>>>,
@@ -29,7 +41,22 @@ impl Door {
     /// `name` is what the certificate is made out to -- the door itself
     /// always listens on 127.0.0.1. Self-signed, and not a CA.
     pub async fn made_out_to(name: &str) -> Door {
-        Door::open(name, rcgen::IsCa::NoCa).await
+        Door::open(name, rcgen::IsCa::NoCa, CREATED.to_string()).await
+    }
+
+    /// The same door for a client that READS what comes back: every request
+    /// is answered `200` with `body` as JSON.
+    pub async fn answering(name: &str, body: &str) -> Door {
+        Door::open(
+            name,
+            rcgen::IsCa::NoCa,
+            format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
+                 content-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            ),
+        )
+        .await
     }
 
     /// The same door, but its certificate says `CA:TRUE` about itself --
@@ -38,11 +65,14 @@ impl Door {
         Door::open(
             name,
             rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained),
+            CREATED.to_string(),
         )
         .await
     }
 
-    async fn open(name: &str, is_ca: rcgen::IsCa) -> Door {
+    /// `response` is what every request gets back, head and body, as it
+    /// goes on the wire.
+    async fn open(name: &str, is_ca: rcgen::IsCa, response: String) -> Door {
         let mut params = rcgen::CertificateParams::new(vec![name.to_string()]).expect("params");
         params.is_ca = is_ca;
         let signing_key = rcgen::KeyPair::generate().expect("key");
@@ -62,12 +92,14 @@ impl Door {
             .expect("listener");
         let port = listener.local_addr().expect("address").port();
         let arrived = Arc::new(Mutex::new(Vec::new()));
+        let response = Arc::new(response);
         tokio::spawn({
             let arrived = arrived.clone();
             async move {
                 while let Ok((tcp, _)) = listener.accept().await {
                     let acceptor = acceptor.clone();
                     let arrived = arrived.clone();
+                    let response = response.clone();
                     tokio::spawn(async move {
                         // A client that refuses the certificate ends
                         // here: the handshake fails, nothing arrives.
@@ -78,11 +110,7 @@ impl Door {
                             return;
                         };
                         arrived.lock().unwrap().push(request);
-                        let _ = tls
-                            .write_all(
-                                b"HTTP/1.1 201 Created\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
-                            )
-                            .await;
+                        let _ = tls.write_all(response.as_bytes()).await;
                         let _ = tls.shutdown().await;
                     });
                 }
@@ -90,6 +118,7 @@ impl Door {
         });
         Door {
             url: format!("https://127.0.0.1:{port}/internal/events"),
+            base: format!("https://127.0.0.1:{port}"),
             cert_pem: cert.pem(),
             arrived,
         }
@@ -136,6 +165,7 @@ async fn read_request<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> Option
     Some(Arrived {
         request_line: head.lines().next().unwrap_or_default().to_string(),
         authorization: header("authorization"),
+        api_key: header("x-api-key"),
         body: String::from_utf8_lossy(&buf[head_end..head_end + length]).into_owned(),
     })
 }

@@ -4,9 +4,19 @@ signal_account_file = "/run/credentials/signal-seerr.service/signal-account"
 
 authentik_url        = "http://192.0.2.10:9000"
 authentik_token_file = "/run/credentials/signal-seerr.service/authentik-token"
+# For an https:// authentik_url whose certificate no public CA signed: a PEM
+# file with one or more certificates, which are then the ONLY ones trusted
+# for authentik_url -- the system's trust store is replaced for this client,
+# not added to. The address in the URL is still checked against the
+# certificate. Missing, unreadable or not PEM stops the bot at startup; so
+# does the field next to an http:// URL. Leave it out to trust what the
+# system trusts.
+# authentik_ca_file = "/etc/signal-seerr/authentik.pem"
 
 seerr_url      = "http://192.0.2.20:5055"
 seerr_key_file = "/run/credentials/signal-seerr.service/seerr-key"
+# The same for seerr_url.
+# seerr_ca_file = "/etc/signal-seerr/seerr.pem"
 
 webhook_listen     = "0.0.0.0:8080"
 webhook_token_file = "/run/credentials/signal-seerr.service/webhook-token"
@@ -58,6 +68,13 @@ operator_name = "the operator"
 # # sonarr_key_file are a pair -- one without the other is a load error.
 # sonarr_url      = "https://sonarr.example.invalid"
 # sonarr_key_file = "/run/credentials/signal-seerr.service/sonarr-key"
+#
+# # For Radarr and Sonarr behind certificates no public CA signed: a PEM file
+# # whose certificates are then the ONLY ones trusted for radarr_url AND
+# # sonarr_url -- one client talks to both, so one file holds both
+# # certificates. Same rules as authentik_ca_file above; next to an http://
+# # radarr_url or sonarr_url it is a load error.
+# ca_file = "/etc/signal-seerr/arr.pem"
 #
 # # How often Radarr/Sonarr are polled for status changes, in seconds.
 # poll_seconds = 600
