@@ -1,0 +1,29 @@
+{
+  "page": 1,
+  "totalPages": 1,
+  "totalResults": 18,
+  "results": [
+    {
+      "id": 100000,
+      "mediaType": "tv",
+      "name": "Serie A",
+      "originalName": "Serie A",
+      "firstAirDate": "2011-12-04",
+      "genreIds": [
+        10765,
+        18,
+        9648
+      ],
+      "originCountry": [
+        "GB"
+      ],
+      "originalLanguage": "en",
+      "overview": "",
+      "popularity": 126.0953,
+      "voteAverage": 8.295,
+      "voteCount": 6599,
+      "backdropPath": null,
+      "posterPath": null
+    }
+  ]
+}

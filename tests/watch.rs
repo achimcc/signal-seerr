@@ -54,6 +54,9 @@ struct FakeSeerr {
 
 #[async_trait::async_trait]
 impl Requests for FakeSeerr {
+    async fn season_count(&self, _tmdb_id: i64) -> anyhow::Result<u16> {
+        unreachable!("the watcher never picks a series")
+    }
     async fn retry(&self, request_id: i64) -> anyhow::Result<()> {
         self.retry_calls.lock().unwrap().push(request_id);
         if self.retry_fail.load(Ordering::SeqCst) {

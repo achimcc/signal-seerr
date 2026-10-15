@@ -138,6 +138,9 @@ struct FakeSeerr {
 
 #[async_trait::async_trait]
 impl Requests for FakeSeerr {
+    async fn season_count(&self, _tmdb_id: i64) -> anyhow::Result<u16> {
+        unreachable!("the watcher never picks a series")
+    }
     async fn retry(&self, _request_id: i64) -> anyhow::Result<()> {
         unreachable!("retry is the watcher's alone")
     }

@@ -51,6 +51,14 @@ pub trait Requests: Send + Sync {
     /// The title Seerr holds for a `tmdb_id` directly -- `Wish` itself never
     /// carries one; see the note on `title_of`.
     async fn title_for(&self, kind: MediaKind, tmdb_id: i64) -> Result<Option<String>>;
+
+    /// How many seasons a series has, from `/api/v1/tv/{tmdb_id}`
+    /// (`numberOfSeasons`). The search result does NOT carry this --
+    /// measured 2026-10-15 (`tests/fixtures/seerr-search-tv.json`), after a
+    /// month in which a guessed `seasonCount` silently read as 0 and every
+    /// numbered seasons answer was refused. An answer without the field is
+    /// an error, never a 0: a 0 is what made that bug invisible.
+    async fn season_count(&self, tmdb_id: i64) -> Result<u16>;
 }
 
 /// Lets an `Arc<SeerrClient>` satisfy `R: Requests` directly, so the same
@@ -101,6 +109,9 @@ impl<T: Requests + ?Sized> Requests for std::sync::Arc<T> {
     }
     async fn title_for(&self, kind: MediaKind, tmdb_id: i64) -> Result<Option<String>> {
         (**self).title_for(kind, tmdb_id).await
+    }
+    async fn season_count(&self, tmdb_id: i64) -> Result<u16> {
+        (**self).season_count(tmdb_id).await
     }
 }
 
@@ -300,10 +311,11 @@ impl Requests for SeerrClient {
                         .get("voteAverage")
                         .and_then(|v| v.as_f64())
                         .map(|v| v as f32),
-                    seasons: entry
-                        .get("seasonCount")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u16,
+                    // Not in the search result -- there is no `seasonCount`
+                    // or anything like it (recorded 2026-10-15,
+                    // `tests/fixtures/seerr-search-tv.json`). `Dialog` asks
+                    // `season_count` when a series is picked.
+                    seasons: 0,
                     already: entry
                         .get("mediaInfo")
                         .and_then(|m| m.get("status"))
@@ -569,6 +581,24 @@ impl Requests for SeerrClient {
             .map(|t| t.to_string()))
     }
 
+    /// `numberOfSeasons` of `/api/v1/tv/{tmdb_id}` -- recorded 2026-10-15
+    /// (`tests/fixtures/seerr-tv.json`): 7 for a seven-season series, and
+    /// `seasons[].seasonNumber` running 1..=7 beside it. Specials would be a
+    /// season 0 in that list and are not counted by Seerr either.
+    async fn season_count(&self, tmdb_id: i64) -> Result<u16> {
+        let detail = self
+            .json(self.get(&format!("/api/v1/tv/{tmdb_id}")).send().await?)
+            .await?;
+        let count = detail
+            .get("numberOfSeasons")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| u16::try_from(n).ok());
+        match count {
+            Some(n) => Ok(n),
+            None => bail!("seerr's details of series {tmdb_id} carry no numberOfSeasons"),
+        }
+    }
+
     async fn withdraw(&self, id: i64, as_user: SeerrUserId) -> Result<()> {
         // The API key is an administrator, so Seerr would delete anybody's
         // request. The owner check has to happen here.
@@ -625,6 +655,9 @@ mod arc_requests_tests {
 
     #[async_trait]
     impl Requests for MockRequests {
+        async fn season_count(&self, _tmdb_id: i64) -> Result<u16> {
+            Ok(7)
+        }
         async fn retry(&self, _request_id: i64) -> Result<()> {
             unreachable!("retry is the watcher's alone")
         }

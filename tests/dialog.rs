@@ -45,6 +45,11 @@ pub struct FakeSeerr {
     /// Authentik username -> Seerr id. Empty means "everybody is 12", so
     /// every test written before this behaves as it always did.
     pub users: Vec<(String, i64)>,
+    /// What `season_count` answers. `None` means "whatever the hit in
+    /// `hits` says", so every test written before the details lookup
+    /// behaves as it always did; `Some(Err)` is Seerr being unreachable.
+    pub season_count: Option<Result<u16, ()>>,
+    pub season_count_calls: Mutex<Vec<i64>>,
 }
 
 #[async_trait::async_trait]
@@ -125,6 +130,19 @@ impl Requests for FakeSeerr {
     async fn title_for(&self, _kind: MediaKind, _tmdb_id: i64) -> anyhow::Result<Option<String>> {
         *self.title_for_calls.lock().unwrap() += 1;
         Ok(self.title.clone())
+    }
+    async fn season_count(&self, tmdb_id: i64) -> anyhow::Result<u16> {
+        self.season_count_calls.lock().unwrap().push(tmdb_id);
+        match self.season_count {
+            Some(Ok(n)) => Ok(n),
+            Some(Err(())) => anyhow::bail!("seerr is down"),
+            None => Ok(self
+                .hits
+                .iter()
+                .find(|h| h.tmdb_id == tmdb_id)
+                .map(|h| h.seasons)
+                .unwrap_or(0)),
+        }
     }
 }
 
@@ -613,11 +631,96 @@ async fn a_season_number_that_does_not_exist_is_refused() {
     assert!(placed(&d).is_empty(), "placed a season that does not exist");
 }
 
+/// The bug of 2026-10-15: `/api/v1/search` carries no season count at all
+/// (recorded, `tests/fixtures/seerr-search-tv.json`), so every hit arrived
+/// with `seasons: 0`, every number failed the `<= seasons` check, and the
+/// bot asked "which seasons?" for ever -- a seventh season of a seven-season
+/// series included. The count has to come from `/api/v1/tv/{id}`, asked for
+/// at the moment the series is picked.
+#[tokio::test]
+async fn a_season_number_is_checked_against_seerrs_details_not_the_search_result() {
+    let series = Hit {
+        kind: MediaKind::Tv,
+        seasons: 0,
+        ..movie(4321, "Andor")
+    };
+    let seerr = FakeSeerr {
+        hits: vec![series],
+        season_count: Some(Ok(7)),
+        ..Default::default()
+    };
+    let mut d = dialog(seerr, true);
+    let aci = Aci("aaaa".into());
+    d.handle(&aci, "andor").await;
+    d.handle(&aci, "1").await;
+    assert_eq!(
+        d.seerr_ref().season_count_calls.lock().unwrap().as_slice(),
+        [4321],
+        "the details must be asked for once, when the series is picked"
+    );
+
+    let done = d.handle(&aci, "7").await;
+    assert!(done[0].contains("eingetragen"), "got: {}", done[0]);
+    let list = placed(&d);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].1, Seasons::Only(vec![7]));
+
+    let seerr = FakeSeerr {
+        hits: vec![Hit {
+            kind: MediaKind::Tv,
+            seasons: 0,
+            ..movie(4321, "Andor")
+        }],
+        season_count: Some(Ok(7)),
+        ..Default::default()
+    };
+    let mut d = dialog(seerr, true);
+    d.handle(&aci, "andor").await;
+    d.handle(&aci, "1").await;
+    let out = d.handle(&aci, "8").await;
+    assert!(out[0].contains("Staffeln"), "asked again, got: {}", out[0]);
+    assert!(placed(&d).is_empty(), "placed a season that does not exist");
+}
+
+/// Without the count there is nothing to check an answer against, and a
+/// silent `0` is exactly what hid the bug above. Seerr being unreachable at
+/// that moment is said so, and nothing is placed.
+#[tokio::test]
+async fn a_series_whose_details_cannot_be_read_is_not_asked_about_seasons() {
+    let series = Hit {
+        kind: MediaKind::Tv,
+        seasons: 0,
+        ..movie(4321, "Andor")
+    };
+    let seerr = FakeSeerr {
+        hits: vec![series],
+        season_count: Some(Err(())),
+        ..Default::default()
+    };
+    let mut d = dialog(seerr, true);
+    let aci = Aci("aaaa".into());
+    d.handle(&aci, "andor").await;
+    let out = d.handle(&aci, "1").await;
+    let catalogue = Catalogue::load();
+    assert_eq!(out, [catalogue.text(Locale::De, "error.seerr_down", &[])]);
+
+    // The conversation is over: "7" now is a fresh search, not an answer.
+    d.handle(&aci, "7").await;
+    assert_eq!(
+        d.seerr_ref().queries.lock().unwrap().as_slice(),
+        ["andor", "7"]
+    );
+    assert!(placed(&d).is_empty());
+}
+
 #[tokio::test]
 async fn status_lists_what_is_still_on_its_way() {
     struct WithPending;
     #[async_trait::async_trait]
     impl Requests for WithPending {
+        async fn season_count(&self, _tmdb_id: i64) -> anyhow::Result<u16> {
+            unreachable!("no series is picked in this test")
+        }
         async fn retry(&self, _request_id: i64) -> anyhow::Result<()> {
             unreachable!("retry is the watcher's alone")
         }
@@ -738,6 +841,9 @@ async fn weg_on_somebody_elses_request_reports_it_as_not_yours() {
     struct Refuses;
     #[async_trait::async_trait]
     impl Requests for Refuses {
+        async fn season_count(&self, _tmdb_id: i64) -> anyhow::Result<u16> {
+            unreachable!("no series is picked in this test")
+        }
         async fn retry(&self, _request_id: i64) -> anyhow::Result<()> {
             unreachable!("retry is the watcher's alone")
         }

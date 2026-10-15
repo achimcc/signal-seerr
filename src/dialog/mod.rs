@@ -432,6 +432,20 @@ impl<R: Requests, D: Directory> Dialog<R, D> {
         }
 
         if matches!(hit.kind, MediaKind::Tv) {
+            // The search result does not say how many seasons there are
+            // (2026-10-15: a guessed field read as 0 for a month, and every
+            // numbered answer was refused). Seerr's details do. Without
+            // them there is nothing to check an answer against, so the
+            // question is not asked at all -- a silent 0 is the bug itself.
+            let mut hit = hit;
+            hit.seasons = match self.seerr.season_count(hit.tmdb_id).await {
+                Ok(n) => n,
+                Err(e) => {
+                    tracing::warn!(error = %e, tmdb_id = hit.tmdb_id, "cannot read the season count");
+                    self.conversations.remove(from);
+                    return vec![self.catalogue.text(locale, "error.seerr_down", &[])];
+                }
+            };
             let question =
                 self.catalogue
                     .text(locale, "request.seasons_question", &[("title", &hit.title)]);
@@ -1171,6 +1185,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Requests for ExpirySeerr {
+        async fn season_count(&self, _tmdb_id: i64) -> anyhow::Result<u16> {
+            Ok(2)
+        }
         async fn retry(&self, _request_id: i64) -> anyhow::Result<()> {
             unreachable!("retry is the watcher's alone")
         }

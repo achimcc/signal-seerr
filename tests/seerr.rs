@@ -222,6 +222,70 @@ const REQUEST_ALL: &str = include_str!("fixtures/seerr-request-all.json");
 /// first `media.downloadStatus` entry this project has ever actually seen.
 const USER_REQUESTS_DOWNLOADING: &str =
     include_str!("fixtures/seerr-user-requests-downloading.json");
+/// Recorded on 2026-10-15, the day a guessed `seasonCount` in the search
+/// result turned out not to exist: one series from `/api/v1/search`, and the
+/// same series from `/api/v1/tv/{id}`, where the count actually lives.
+const SEARCH_TV: &str = include_str!("fixtures/seerr-search-tv.json");
+const TV_DETAILS: &str = include_str!("fixtures/seerr-tv.json");
+
+#[tokio::test]
+async fn a_recorded_search_result_carries_no_season_count() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/search"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::from_str::<serde_json::Value>(SEARCH_TV).unwrap()),
+        )
+        .mount(&server)
+        .await;
+
+    let hits = client(&server).search("serie a", None, 1).await.unwrap();
+
+    assert_eq!(hits.len(), 1);
+    assert!(matches!(hits[0].kind, MediaKind::Tv));
+    assert_eq!(
+        hits[0].seasons, 0,
+        "the search result cannot say -- the count comes from season_count"
+    );
+}
+
+#[tokio::test]
+async fn season_count_reads_number_of_seasons_from_the_recorded_details() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/tv/100000"))
+        .and(header("X-Api-Key", "k-e-y"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::from_str::<serde_json::Value>(TV_DETAILS).unwrap()),
+        )
+        .mount(&server)
+        .await;
+
+    let count = client(&server).season_count(100000).await.unwrap();
+
+    assert_eq!(count, 7);
+}
+
+#[tokio::test]
+async fn details_without_a_season_count_are_an_error_not_a_zero() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/tv/5"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 5, "name": "B" })),
+        )
+        .mount(&server)
+        .await;
+
+    let err = client(&server).season_count(5).await.unwrap_err();
+
+    assert!(
+        err.to_string().contains("numberOfSeasons"),
+        "a missing count must be named, not read as 0: {err:#}"
+    );
+}
 
 #[tokio::test]
 async fn pending_reads_the_recorded_wire_format() {
